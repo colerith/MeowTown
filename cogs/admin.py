@@ -54,4 +54,5 @@ class Admin(commands.Cog):
             raise error
 
 def setup(bot):
+
     bot.add_cog(Admin(bot))
