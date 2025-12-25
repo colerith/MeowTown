@@ -10,18 +10,6 @@ from utils.db import get_citizen, update_money, set_user_status
 from utils.stock_data import STOCKS, generate_dynamic_news
 
 DB_PATH = "./data/meowtown.db"
-NEWS_CHANNEL_ID = # cogs/stock_market.py
-import discord
-import random
-import aiosqlite
-import asyncio
-import datetime
-from discord.ext import commands, tasks
-from discord.ui import View, Select, Button, Modal, InputText
-from utils.db import get_citizen, update_money, set_user_status
-from utils.stock_data import STOCKS, generate_dynamic_news
-
-DB_PATH = "./data/meowtown.db"
 NEWS_CHANNEL_ID = 1443488941045977140 # 请确保这里填对你的频道ID
 MAX_LOAN_RATIO = 2.0
 IMG_STOCK = "https://i.postimg.cc/gcSBzV0j/stock-market.png"
@@ -792,4 +780,5 @@ class StockMarket(commands.Cog):
 
 def setup(bot):
     bot.add_cog(StockMarket(bot))
+
 
