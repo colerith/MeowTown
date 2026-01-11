@@ -1,5 +1,6 @@
 # utils/stock_data.py
 import random
+import math
 
 # 股票定义（保持不变）
 STOCKS = {
@@ -157,24 +158,99 @@ NEWS_PARTS = {
     }
 }
 
-def generate_dynamic_news(stock_id):
+def calculate_next_price(stock_id, current_price, news_score):
     """
-    动态生成一条新闻及其综合情绪分
-    返回: (news_text, total_score)
+    根据当前价格、基础价格和新闻分数，计算下一个价格。
+    包含【均值回归】和【阻尼机制】防止数据爆炸。
+    """
+    stock_info = STOCKS[stock_id]
+    base_price = stock_info["base_price"]
+    volatility = stock_info["volatility"]
+    
+    # --- 机制A: 基础涨跌幅 ---
+    # 分数每增加1分，理论波动 x%
+    # 比如 BOX volatility=0.1, score=3 -> 理论涨 30%
+    raw_change_pct = volatility * news_score * 0.1 
+
+    # --- 机制B: 均值回归 (橡皮筋效应) ---
+    # 计算偏离度: ratio = 当前价 / 基础价
+    # 如果 ratio=10 (涨了10倍)，它应该很难再涨，但很容易跌
+    ratio = current_price / base_price
+    
+    final_change_pct = raw_change_pct
+
+    # 1. 抑制暴涨 (当价格高于基准且利好时)
+    if ratio > 1.2 and raw_change_pct > 0:
+        # 使用对数函数进行压缩：价格越高，分母越大，涨幅越小
+        # 例如 10倍价格时，涨幅会被除以 ~3.3
+        damping = math.log(ratio) + 1
+        final_change_pct = raw_change_pct / damping
+        
+    # 2. 抑制归零 (当价格低于基准且利空时)
+    elif ratio < 0.8 and raw_change_pct < 0:
+        # 价格越低，跌幅打折。如果剩 10%，跌幅乘以 0.1，跌得极慢
+        final_change_pct = raw_change_pct * ratio
+
+    # --- 机制C: 熔断限制 (硬顶/硬底) ---
+    # 单次涨跌幅限制在 ±35% 以内 (DOGE除外)
+    limit = 0.80 if stock_id == "DOGE" else 0.35
+    if final_change_pct > limit: final_change_pct = limit
+    if final_change_pct < -limit: final_change_pct = -limit
+
+    # --- 计算新价格 ---
+    next_price = current_price * (1 + final_change_pct)
+    
+    # 保底价格 (防止变成负数或0)
+    if next_price < 0.5: 
+        next_price = 0.5
+        
+    return round(next_price, 2), round(final_change_pct * 100, 2)
+
+
+def generate_dynamic_news(stock_id, current_price=None):
+    """
+    动态生成新闻。
+    参数 current_price (可选): 如果传入当前价格，系统会根据价格高低
+    智能调整生成利好还是利空的概率（高位自动唱空，低位自动唱多）。
     """
     stock_name = STOCKS[stock_id]["name"]
+    stock_base = STOCKS[stock_id]["base_price"]
     
-    # 60%概率是特定事件，40%是通用评价
+    # --- 智能概率调整 ---
+    # 默认 50% 概率是正面事件
+    positive_prob = 0.5
+    
+    if current_price:
+        ratio = current_price / stock_base
+        if ratio > 5.0:   # 涨了5倍以上
+            positive_prob = 0.2  # 只有20%概率出好消息 (杀估值)
+        elif ratio < 0.3: # 跌剩30%
+            positive_prob = 0.8  # 80%概率出好消息 (抄底)
+
+    # 决定新闻类型：60%概率特定事件，40%通用拼接
     if random.random() < 0.6:
-        # 单独的股票特定事件
-        event_part = random.choice(NEWS_PARTS["event"][stock_id])
-        news_text = f"据喵尔街日报报道，{stock_name} {event_part['text']}。"
-        total_score = event_part["score"]
+        # 特定事件
+        # 简单处理：如果随机数 < positive_prob，尝试找分数为正的事件，否则找负的
+        # 为了代码简单，这里先随机取，如果不符合倾向再重试一次
+        candidates = NEWS_PARTS["event"][stock_id]
+        chosen_event = random.choice(candidates)
+        
+        # 简单的重试机制以符合概率倾向
+        is_positive_event = chosen_event["score"] > 0
+        if (positive_prob > 0.6 and not is_positive_event) or \
+           (positive_prob < 0.4 and is_positive_event):
+            # 倾向不符，重抽一次
+            chosen_event = random.choice(candidates)
+
+        news_text = f"据喵尔街日报报道，{stock_name} {chosen_event['text']}。"
+        total_score = chosen_event["score"]
     else:
-        # 拼接通用新闻: [主语] + [动作]
+        # 通用拼接
         subject_part = random.choice(NEWS_PARTS["subject"])
-        trend = "positive" if random.random() < 0.5 else "negative"
-        action_part = random.choice(NEWS_PARTS["action"][trend])
+        
+        # 根据概率决定动作是好是坏
+        trend_key = "positive" if random.random() < positive_prob else "negative"
+        action_part = random.choice(NEWS_PARTS["action"][trend_key])
         
         news_text = subject_part["text"] + " " + action_part["text"].format(name=stock_name)
         total_score = subject_part["score"] + action_part["score"]

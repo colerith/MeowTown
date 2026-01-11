@@ -7,7 +7,7 @@ import datetime
 from discord.ext import commands, tasks
 from discord.ui import View, Select, Button, Modal, InputText
 from utils.db import get_citizen, update_money, set_user_status
-from utils.stock_data import STOCKS, generate_dynamic_news
+from utils.stock_data import STOCKS, generate_dynamic_news, calculate_next_price
 
 DB_PATH = "./data/meowtown.db"
 NEWS_CHANNEL_ID = 1443488941045977140 # 请确保这里填对你的频道ID
@@ -327,31 +327,48 @@ class StockMarket(commands.Cog):
 
     @tasks.loop(minutes=20)
     async def market_update(self):
+        # 创建新闻 Embed
         news_embed = discord.Embed(title="📈 喵尔街快讯", color=0x3498db)
         
         async with aiosqlite.connect(DB_PATH) as db:
             for stock_id, data in STOCKS.items():
-                news, score = generate_dynamic_news(stock_id)
+                # Step 1: 先获取当前价格 (为了生成符合当前行情的智能新闻)
                 cursor = await db.execute("SELECT current_price FROM stocks WHERE stock_id = ?", (stock_id,))
                 row = await cursor.fetchone()
                 current_price = row[0] if row else data['base_price']
                 
-                change_percent = (score * 0.05) + random.uniform(-data["volatility"]/2, data["volatility"]/2)
-                new_price = max(1, current_price * (1 + change_percent))
+                # Step 2: 生成新闻 (传入 current_price 以触发宏观调控)
+                news, score = generate_dynamic_news(stock_id, current_price=current_price)
                 
-                await db.execute("UPDATE stocks SET current_price = ?, last_change = ? WHERE stock_id = ?", (new_price, new_price - current_price, stock_id))
+                # Step 3: 使用新算法计算价格 (包含均值回归、阻尼防暴涨)
+                # calculate_next_price 返回 (新价格, 涨跌幅百分比)
+                new_price, change_pct = calculate_next_price(stock_id, current_price, score)
                 
-                diff = new_price - current_price
-                icon = "🔼" if diff > 0 else "🔽"
-                pct = (diff / current_price) * 100 if current_price != 0 else 0
+                # Step 4: 计算差价并更新数据库
+                price_diff = new_price - current_price
+                await db.execute("UPDATE stocks SET current_price = ?, last_change = ? WHERE stock_id = ?", (new_price, price_diff, stock_id))
                 
+                # Step 5: 格式化显示
+                if price_diff > 0:
+                    icon = "🔼"
+                    color_code = "+ " # 用于diff显示
+                elif price_diff < 0:
+                    icon = "🔽"
+                    color_code = "" # 负数自带符号
+                else:
+                    icon = "⏺️"
+                    color_code = ""
+
+                # 这里的 change_pct 已经是百分比数值了 (例如 5.2)，不需要再乘 100
                 news_embed.add_field(
                     name=f"{data['icon']} {data['name']}", 
-                    value=f"**{new_price:.2f}** {icon} ({pct:+.2f}%)\n> {news}", 
+                    value=f"**{new_price:.2f}** {icon} ({change_pct:+.2f}%)\n> {news}", 
                     inline=False
                 )
+            
             await db.commit()
         
+        # --- 下面保持不变，负责发送或更新消息 ---
         now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         news_embed.set_footer(text=f"最后刷新: {now_str} | 20分钟更新一次")
 
@@ -367,6 +384,7 @@ class StockMarket(commands.Cog):
                 try:
                     await latest_msg.edit(embed=news_embed)
                     print(f"[{now_str}] 股市新闻已更新 (Edit)")
+                    # 清理旧消息
                     if len(bot_messages) > 1:
                         for old_msg in bot_messages[1:]:
                             await old_msg.delete()
