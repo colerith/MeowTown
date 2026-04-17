@@ -1,0 +1,1 @@
+"""MeowTown app package."""
