@@ -25,6 +25,7 @@ from app.shared.data.title_data import TITLES
 SIGNIN_CHANNEL_ID = 1443488941045977140
 CHECKIN_TITLE = "🌞 喵喵镇民每日签到"
 BEIJING_TZ = ZoneInfo("Asia/Shanghai")
+SIGNIN_PANEL_ID = "daily_signin_panel_v1"
 
 
 def get_beijing_now():
@@ -51,7 +52,7 @@ async def build_checkin_embed():
     today_count = await count_daily_signins_by_date(today)
     now_text = get_beijing_now().strftime("%Y-%m-%d %H:%M:%S")
 
-    embed = discord.Embed(title=CHECKIN_TITLE, color=0xF1C40F)
+    embed = discord.Embed(title=CHECKIN_TITLE, color=0xF1C40F, url=f"https://panel.local/{SIGNIN_PANEL_ID}")
     embed.description = (
         "欢迎来到镇民签到站。\n"
         "已注册喵喵每天都可以来签到一次，按 **北京时间** 结算。"
@@ -64,8 +65,15 @@ async def build_checkin_embed():
     )
     embed.add_field(name="今日签到人数", value=f"**{today_count}** 位镇民", inline=True)
     embed.add_field(name="当前日期", value=f"**{today}**", inline=True)
-    embed.set_footer(text=f"最后刷新: {now_text} | 每日 0 点后可再次签到（北京时间）")
+    embed.set_footer(text=f"最后刷新: {now_text} | 每日 0 点后可再次签到（北京时间） | 面板ID:{SIGNIN_PANEL_ID}")
     return embed
+
+
+def is_signin_panel_message(message: discord.Message):
+    if message.author.bot is False or not message.embeds:
+        return False
+    embed = message.embeds[0]
+    return embed.title == CHECKIN_TITLE and (embed.url or "").endswith(SIGNIN_PANEL_ID)
 
 
 async def apply_bonus_event(user_id):
@@ -203,10 +211,16 @@ class DailySignin(commands.Cog):
     async def find_panel_messages(self, channel):
         panel_messages = []
         async for message in channel.history(limit=100):
-            if message.author == self.bot.user and message.embeds:
-                if message.embeds[0].title == CHECKIN_TITLE:
-                    panel_messages.append(message)
+            if is_signin_panel_message(message):
+                panel_messages.append(message)
         return panel_messages
+
+    async def get_latest_panel_message(self, channel=None):
+        channel = channel or self.bot.get_channel(SIGNIN_CHANNEL_ID)
+        if channel is None:
+            return None
+        panel_messages = await self.find_panel_messages(channel)
+        return panel_messages[0] if panel_messages else None
 
     async def ensure_panel_bottom(self):
         async with self.panel_lock:
@@ -214,13 +228,27 @@ class DailySignin(commands.Cog):
             if channel is None:
                 return
 
+            stock_cog = self.bot.get_cog("StockMarket")
+            if stock_cog is not None:
+                await stock_cog.ensure_news_panel_stack_bottom(channel=channel)
+
             panel_messages = await self.find_panel_messages(channel)
             newest_panel = panel_messages[0] if panel_messages else None
             latest_message = None
             async for message in channel.history(limit=1):
                 latest_message = message
 
-            need_new_panel = newest_panel is None or latest_message is None or latest_message.id != newest_panel.id
+            stock_panel = None
+            if stock_cog is not None:
+                stock_panel = await stock_cog.find_stock_panel_messages(channel)
+                stock_panel = stock_panel[0] if stock_panel else None
+
+            need_new_panel = (
+                newest_panel is None
+                or latest_message is None
+                or latest_message.id != newest_panel.id
+                or (stock_panel is not None and newest_panel.id < stock_panel.id)
+            )
             new_panel_message = newest_panel
             if need_new_panel:
                 new_panel_message = await channel.send(embed=await build_checkin_embed(), view=self.panel_view)

@@ -37,6 +37,71 @@ LAND_PRICES = {
     4: 5000,    5: 15000,   6: 50000,   7: 150000,  8: 500000
 }
 
+
+def summarize_fertilizer_usage(usage_counter):
+    parts = []
+    for item_name, count in usage_counter.items():
+        parts.append(f"**{item_name} x{count}**")
+    return "、".join(parts)
+
+
+async def execute_fertilize_actions(user_id, target_uses=None):
+    plots = await get_farm_state(user_id)
+    has_planted = any(row[2] is not None for row in plots)
+    if not has_planted:
+        return False, "no_crops", None
+
+    items = await get_items(user_id)
+    fertilizer_counts = {
+        item_name: count
+        for item_name, count in items
+        if item_name in FARM_FERTILIZERS and count > 0
+    }
+    if not fertilizer_counts:
+        return False, "no_fertilizer", None
+
+    total_available = sum(fertilizer_counts.values())
+    if target_uses is None:
+        target_uses = total_available
+    else:
+        target_uses = min(target_uses, total_available)
+
+    if target_uses <= 0:
+        return False, "no_fertilizer", None
+
+    total_reduce = 0
+    total_used = 0
+    usage_counter = {}
+    fertilizer_order = sorted(
+        FARM_FERTILIZERS.items(),
+        key=lambda item: item[1]["seconds"],
+        reverse=True,
+    )
+
+    for item_name, data in fertilizer_order:
+        available = fertilizer_counts.get(item_name, 0)
+        while available > 0 and total_used < target_uses:
+            success = await use_item_from_db(user_id, item_name)
+            if not success:
+                break
+            available -= 1
+            total_used += 1
+            total_reduce += data["seconds"]
+            usage_counter[item_name] = usage_counter.get(item_name, 0) + 1
+
+        if total_used >= target_uses:
+            break
+
+    if total_used <= 0:
+        return False, "no_fertilizer", None
+
+    await accelerate_farm_growth(user_id, total_reduce)
+    return True, {
+        "used_count": total_used,
+        "total_reduce": total_reduce,
+        "usage_counter": usage_counter,
+    }, None
+
 # --- 辅助函数：生成农场状态 Embed ---
 async def render_farm_embed(user_id, user_name, avatar_url):
     current_time = int(time.time())
@@ -376,6 +441,57 @@ class GuardRentView(View):
         self.add_item(GuardRentSelect(user_id, user_name, user_avatar))
 
 
+class FertilizeActionView(View):
+    def __init__(self, parent_view, source_message):
+        super().__init__(timeout=120)
+        self.parent_view = parent_view
+        self.source_message = source_message
+
+    async def run_fertilize(self, interaction: discord.Interaction, target_uses):
+        if interaction.user.id != self.parent_view.user_id:
+            return await interaction.response.send_message("这不是你的农场！", ephemeral=True)
+
+        success, payload, _ = await execute_fertilize_actions(self.parent_view.user_id, target_uses=target_uses)
+        if not success:
+            if payload == "no_crops":
+                return await interaction.response.send_message("🚫 你的地里一块农作物都没有，施肥不会生效。", ephemeral=True)
+            return await interaction.response.send_message("🚫 你没有化肥！请点击【农场商店】购买。", ephemeral=True)
+
+        total_minutes = payload["total_reduce"] // 60
+        usage_text = summarize_fertilizer_usage(payload["usage_counter"])
+        embed = await render_farm_embed(
+            self.parent_view.user_id,
+            self.parent_view.user_name,
+            self.parent_view.user_avatar,
+        )
+        await interaction.response.send_message(
+            f"🧪 本次共施肥 **{payload['used_count']}** 次，消耗 {usage_text}。\n"
+            f"所有作物累计加速 **{total_minutes}** 分钟。",
+            ephemeral=True,
+        )
+        if self.source_message:
+            try:
+                await self.source_message.edit(embed=embed, view=self.parent_view)
+            except Exception:
+                pass
+
+    @discord.ui.button(label="施肥5次", style=discord.ButtonStyle.success, emoji="5️⃣", row=0)
+    async def fertilize_5(self, button, interaction):
+        await self.run_fertilize(interaction, 5)
+
+    @discord.ui.button(label="施肥10次", style=discord.ButtonStyle.success, emoji="🔟", row=0)
+    async def fertilize_10(self, button, interaction):
+        await self.run_fertilize(interaction, 10)
+
+    @discord.ui.button(label="施肥20次", style=discord.ButtonStyle.success, emoji="🧪", row=0)
+    async def fertilize_20(self, button, interaction):
+        await self.run_fertilize(interaction, 20)
+
+    @discord.ui.button(label="全部施肥", style=discord.ButtonStyle.primary, emoji="🚿", row=0)
+    async def fertilize_all(self, button, interaction):
+        await self.run_fertilize(interaction, None)
+
+
 class StealTargetModal(Modal):
     def __init__(self, parent_view):
         super().__init__(title="指定用户偷菜")
@@ -473,27 +589,21 @@ class FarmDashboardView(View):
 
     @discord.ui.button(label="施肥", style=discord.ButtonStyle.secondary, emoji="🧪", row=1)
     async def fertilize_btn(self, button, interaction):
-        if interaction.user.id != self.user_id: return
-        
-        await interaction.response.defer(ephemeral=True)
+        if interaction.user.id != self.user_id:
+            return
 
-        name = None
-        reduce = None
-        for item_name, data in sorted(FARM_FERTILIZERS.items(), key=lambda item: item[1]["seconds"], reverse=True):
-            if await use_item_from_db(self.user_id, item_name):
-                name = item_name
-                reduce = data["seconds"]
-                break
+        plots = await get_farm_state(self.user_id)
+        if not any(row[2] is not None for row in plots):
+            return await interaction.response.send_message("🚫 你的地里一块农作物都没有，施肥不会生效。", ephemeral=True)
 
-        if reduce is None:
-            return await interaction.followup.send("🚫 你没有化肥！请点击【农场商店】购买。", ephemeral=True)
-        
-        await accelerate_farm_growth(self.user_id, reduce)
-            
-        await interaction.followup.send(f"🧪 撒下了 **{name}**！所有作物加速生长了。", ephemeral=True)
-        # 刷新界面
-        embed = await render_farm_embed(self.user_id, self.user_name, self.user_avatar)
-        await interaction.message.edit(embed=embed, view=self)
+        items = await get_items(self.user_id)
+        fertilizer_total = sum(count for item_name, count in items if item_name in FARM_FERTILIZERS)
+        if fertilizer_total <= 0:
+            return await interaction.response.send_message("🚫 你没有化肥！请点击【农场商店】购买。", ephemeral=True)
+
+        embed = discord.Embed(title="🧪 批量施肥", description="选择本次要连续施肥的次数。系统会优先消耗效果更强的化肥。", color=0x27AE60)
+        embed.add_field(name="当前可用", value=f"共 **{fertilizer_total}** 次", inline=False)
+        await interaction.response.send_message(embed=embed, view=FertilizeActionView(self, interaction.message), ephemeral=True)
 
     @discord.ui.button(label="刷新", style=discord.ButtonStyle.secondary, emoji="🔄", row=1)
     async def refresh_btn(self, button, interaction):

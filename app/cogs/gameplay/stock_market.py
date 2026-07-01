@@ -624,10 +624,14 @@ class StockMarket(commands.Cog):
             if signin_cog is not None:
                 signin_panel = await signin_cog.get_latest_panel_message(channel)
 
+            should_update_existing = embed is not None
             if embed is None:
-                embed, _ = await build_stock_news_embed()
+                if newest_panel is not None and newest_panel.embeds:
+                    embed = newest_panel.embeds[0]
+                else:
+                    embed, _ = await build_stock_news_embed()
 
-            if newest_panel is not None:
+            if newest_panel is not None and should_update_existing:
                 try:
                     await newest_panel.edit(embed=embed)
                 except discord.NotFound:
