@@ -27,6 +27,7 @@ CHECKIN_TITLE = "🌞 喵喵镇民每日签到"
 BEIJING_TZ = ZoneInfo("Asia/Shanghai")
 SIGNIN_PANEL_ID = "daily_signin_panel_v1"
 SIGNIN_PANEL_MARKER = "\u2063\u2063\u2064signin_panel_v1\u2064\u2063\u2063"
+SIGNIN_PANEL_URL = f"https://meowtown.local/panel/{SIGNIN_PANEL_ID}"
 SIGNIN_REWARD_TIERS = [
     {
         "key": "common",
@@ -113,7 +114,7 @@ async def build_checkin_embed():
     today_count = await count_daily_signins_by_date(today)
     now_text = get_beijing_now().strftime("%Y-%m-%d %H:%M:%S")
 
-    embed = discord.Embed(title=CHECKIN_TITLE, color=0xF1C40F)
+    embed = discord.Embed(title=CHECKIN_TITLE, url=SIGNIN_PANEL_URL, color=0xF1C40F)
     embed.description = (
         "欢迎来到镇民签到站。\n"
         "已注册喵喵每天都可以来签到一次，按 **北京时间** 结算。"
@@ -140,7 +141,7 @@ def is_signin_panel_message(message: discord.Message):
     embed = message.embeds[0]
     return embed.title == CHECKIN_TITLE and (
         message.content == SIGNIN_PANEL_MARKER
-        or (embed.url or "").endswith(SIGNIN_PANEL_ID)
+        or (embed.url or "") == SIGNIN_PANEL_URL
     )
 
 
@@ -332,7 +333,6 @@ class DailySignin(commands.Cog):
             new_panel_message = newest_panel
             if need_new_panel:
                 new_panel_message = await channel.send(
-                    content=SIGNIN_PANEL_MARKER,
                     embed=await build_checkin_embed(),
                     view=self.panel_view,
                 )
@@ -346,7 +346,7 @@ class DailySignin(commands.Cog):
 
             if new_panel_message and not need_new_panel:
                 try:
-                    await new_panel_message.edit(embed=await build_checkin_embed(), view=self.panel_view)
+                    await new_panel_message.edit(content=None, embed=await build_checkin_embed(), view=self.panel_view)
                 except Exception:
                     pass
 
@@ -360,7 +360,6 @@ class DailySignin(commands.Cog):
 
             panel_messages = await self.find_panel_messages(channel)
             new_panel_message = await channel.send(
-                content=SIGNIN_PANEL_MARKER,
                 embed=await build_checkin_embed(),
                 view=self.panel_view,
             )

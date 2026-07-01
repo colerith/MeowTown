@@ -39,6 +39,7 @@ IMG_STOCK = "https://i.postimg.cc/gcSBzV0j/stock-market.png"
 STOCK_NEWS_TITLE = "📈 喵尔街快讯"
 STOCK_NEWS_PANEL_ID = "stock_news_panel_v1"
 STOCK_NEWS_PANEL_MARKER = "\u2063\u2063\u2064stock_news_panel_v1\u2064\u2063\u2063"
+STOCK_NEWS_PANEL_URL = f"https://meowtown.local/panel/{STOCK_NEWS_PANEL_ID}"
 
 
 def get_guide_embed():
@@ -104,12 +105,12 @@ def is_stock_news_message(message: discord.Message):
     embed = message.embeds[0]
     return embed.title == STOCK_NEWS_TITLE and (
         message.content == STOCK_NEWS_PANEL_MARKER
-        or (embed.url or "").endswith(STOCK_NEWS_PANEL_ID)
+        or (embed.url or "") == STOCK_NEWS_PANEL_URL
     )
 
 
 async def build_stock_news_embed():
-    news_embed = discord.Embed(title=STOCK_NEWS_TITLE, color=0x3498DB)
+    news_embed = discord.Embed(title=STOCK_NEWS_TITLE, url=STOCK_NEWS_PANEL_URL, color=0x3498DB)
     for stock_id, data in STOCKS.items():
         current_price = await get_stock_price(stock_id) or data["base_price"]
         news, score = generate_dynamic_news(stock_id, current_price=current_price)
@@ -644,7 +645,7 @@ class StockMarket(commands.Cog):
 
             if newest_panel is not None and should_update_existing:
                 try:
-                    await newest_panel.edit(embed=embed)
+                    await newest_panel.edit(content=None, embed=embed)
                 except discord.NotFound:
                     newest_panel = None
 
@@ -656,7 +657,7 @@ class StockMarket(commands.Cog):
             )
 
             if should_recreate:
-                ordered_panel = await channel.send(content=STOCK_NEWS_PANEL_MARKER, embed=embed)
+                ordered_panel = await channel.send(embed=embed)
 
             for message in panel_messages:
                 if ordered_panel is not None and message.id != ordered_panel.id:
@@ -677,7 +678,7 @@ class StockMarket(commands.Cog):
 
             embed, _now_str = await build_stock_news_embed()
             panel_messages = await self.find_stock_panel_messages(channel)
-            ordered_panel = await channel.send(content=STOCK_NEWS_PANEL_MARKER, embed=embed)
+            ordered_panel = await channel.send(embed=embed)
 
             for message in panel_messages:
                 try:
