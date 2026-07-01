@@ -29,6 +29,7 @@ SIGNIN_PANEL_ID = "daily_signin_panel_v1"
 SIGNIN_REWARD_TIERS = [
     {
         "key": "common",
+        "label": "猫爪阶",
         "weight": 540,
         "min": 1000,
         "max": 8888,
@@ -36,6 +37,7 @@ SIGNIN_REWARD_TIERS = [
     },
     {
         "key": "cozy",
+        "label": "呼噜阶",
         "weight": 260,
         "min": 8889,
         "max": 66666,
@@ -43,6 +45,7 @@ SIGNIN_REWARD_TIERS = [
     },
     {
         "key": "lucky",
+        "label": "幸运阶",
         "weight": 120,
         "min": 66667,
         "max": 666666,
@@ -50,6 +53,7 @@ SIGNIN_REWARD_TIERS = [
     },
     {
         "key": "rare",
+        "label": "彩虹阶",
         "weight": 55,
         "min": 666667,
         "max": 6666666,
@@ -57,6 +61,7 @@ SIGNIN_REWARD_TIERS = [
     },
     {
         "key": "legendary",
+        "label": "招财阶",
         "weight": 20,
         "min": 6666667,
         "max": 30000000,
@@ -64,6 +69,7 @@ SIGNIN_REWARD_TIERS = [
     },
     {
         "key": "mythic",
+        "label": "神话阶",
         "weight": 5,
         "min": 30000001,
         "max": 99999999,
@@ -237,7 +243,7 @@ class DailySigninView(View):
         )
         embed.add_field(
             name="奖励阶梯",
-            value=f"**{reward_tier['key']}** ｜ 区间 `{reward_tier['min']} - {reward_tier['max']}`",
+            value=f"**{reward_tier['label']}** ｜ 区间 `{reward_tier['min']} - {reward_tier['max']}`",
             inline=False,
         )
         if bonus_message:

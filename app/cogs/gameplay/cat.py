@@ -309,7 +309,13 @@ class Cat(commands.Cog):
         if stock_cog is None:
             return await ctx.followup.send("🚫 股市模块未加载。", ephemeral=True)
 
-        result = await stock_cog.backfill_registered_role(ctx.guild)
+        await ctx.followup.send("⏳ 已开始补发镇民身份组，人数较多时可能需要一点时间，请稍等结果回执。", ephemeral=True)
+
+        try:
+            result = await stock_cog.backfill_registered_role(ctx.guild)
+        except Exception as exc:
+            return await ctx.followup.send(f"🚫 补发过程中出现异常：{exc}", ephemeral=True)
+
         if result["role_missing"]:
             return await ctx.followup.send("🚫 未找到目标身份组。", ephemeral=True)
 

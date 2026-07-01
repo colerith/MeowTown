@@ -120,6 +120,7 @@ class DailySigninRewardTests(unittest.TestCase):
 
         self.assertEqual(reward, 7777777)
         self.assertEqual(tier["key"], "legendary")
+        self.assertEqual(tier["label"], "招财阶")
         self.assertLessEqual(tier["min"], reward)
         self.assertLessEqual(reward, tier["max"])
         self.assertIn("招财猫", tier["message"])

@@ -33,7 +33,7 @@ from app.shared.data.stock_data import STOCKS, calculate_next_price, generate_dy
 
 NEWS_CHANNEL_ID = 1443488941045977140
 REGISTERED_ROLE_ID = 1521848592476668005
-COMPENSATION_STOCK_OPTIONS = ("FISH", "CATN", "TOY", "BOX")
+COMPENSATION_STOCK_OPTIONS = ("FISH", "CATN", "TOY", "BOX", "DOGE")
 COMPENSATION_SHARES_PER_STOCK = 100
 IMG_STOCK = "https://i.postimg.cc/gcSBzV0j/stock-market.png"
 STOCK_NEWS_TITLE = "📈 喵尔街快讯"
@@ -142,7 +142,7 @@ class CompensationAnnouncementConfig:
     rules_text: str = (
         "1. 仅限已完成 `/喵喵小镇 注册` 的喵喵领取\n"
         "2. 每位喵喵仅可领取一次\n"
-        "3. 可选企业：咸鱼海运、猫薄荷生物、逗猫棒重工、纸箱地产"
+        "3. 可选企业：咸鱼海运、猫薄荷生物、逗猫棒重工、纸箱地产、柴犬币"
     )
     note_text: str = "点击下方按钮后，选择两个不同企业即可立即入账。"
     mention_registered_role: bool = False
@@ -188,9 +188,12 @@ class CompensationContentModal(Modal):
     async def callback(self, interaction: discord.Interaction):
         self.parent_view.config.title = self.children[0].value.strip() or self.parent_view.config.title
         self.parent_view.config.body = self.children[1].value.strip() or self.parent_view.config.body
-        if self.parent_view.message is not None:
-            await self.parent_view.message.edit(embed=self.parent_view.build_preview_embed(), view=self.parent_view)
         await interaction.response.send_message("✅ 公告标题与正文已更新。", ephemeral=True)
+        if self.parent_view.message is not None:
+            try:
+                await self.parent_view.message.edit(embed=self.parent_view.build_preview_embed(), view=self.parent_view)
+            except (discord.NotFound, discord.HTTPException):
+                pass
 
 
 class CompensationDetailModal(Modal):
@@ -226,9 +229,12 @@ class CompensationDetailModal(Modal):
         self.parent_view.config.compensation_text = self.children[0].value.strip() or self.parent_view.config.compensation_text
         self.parent_view.config.rules_text = self.children[1].value.strip() or self.parent_view.config.rules_text
         self.parent_view.config.note_text = self.children[2].value.strip() or self.parent_view.config.note_text
-        if self.parent_view.message is not None:
-            await self.parent_view.message.edit(embed=self.parent_view.build_preview_embed(), view=self.parent_view)
         await interaction.response.send_message("✅ 补偿规则与说明已更新。", ephemeral=True)
+        if self.parent_view.message is not None:
+            try:
+                await self.parent_view.message.edit(embed=self.parent_view.build_preview_embed(), view=self.parent_view)
+            except (discord.NotFound, discord.HTTPException):
+                pass
 
 
 class CompensationStockSelect(Select):
