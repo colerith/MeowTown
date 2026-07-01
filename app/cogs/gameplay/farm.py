@@ -432,7 +432,7 @@ class GuardRentSelect(Select):
             ephemeral=True,
         )
         if interaction.message:
-            await interaction.message.edit(embed=embed, view=FarmDashboardView(self.user_id, self.user_name, self.user_avatar))
+            await FarmDashboardView(self.user_id, self.user_name, self.user_avatar).safe_refresh_message(interaction.message)
 
 
 class GuardRentView(View):
@@ -522,16 +522,23 @@ class FarmDashboardView(View):
     async def refresh_farm(self, interaction: discord.Interaction):
         if interaction.user.id != self.user_id:
             return await interaction.response.send_message("这不是你的农场！", ephemeral=True)
-        
-        # 刷新操作因为是 update_message，通常不需要 defer，但为了稳妥可以 defer 
-        # (不过 edit_message 本身响应很快，且是在已有交互上操作)
+
         embed = await render_farm_embed(self.user_id, self.user_name, self.user_avatar)
         try:
             await interaction.response.edit_message(embed=embed, view=self)
-        except: 
-            # 如果 response 已经用过了 (比如报错)，尝试 edit
-            try: await interaction.message.edit(embed=embed, view=self)
-            except: pass
+        except Exception:
+            await self.safe_refresh_message(interaction.message)
+
+    async def safe_refresh_message(self, message=None):
+        if message is None:
+            return
+        embed = await render_farm_embed(self.user_id, self.user_name, self.user_avatar)
+        try:
+            await message.edit(embed=embed, view=self)
+        except discord.NotFound:
+            return
+        except discord.HTTPException:
+            return
 
     @discord.ui.button(label="农场商店", style=discord.ButtonStyle.primary, emoji="🏪", row=0)
     async def shop_btn(self, button, interaction):
@@ -565,9 +572,7 @@ class FarmDashboardView(View):
         if total_income > 0:
             await update_money(self.user_id, total_income)
             await interaction.followup.send(f"💰 收获了: {', '.join(harvested)}\n一共卖出 **{total_income}** 喵币！", ephemeral=True)
-            # 刷新界面
-            embed = await render_farm_embed(self.user_id, self.user_name, self.user_avatar)
-            await interaction.message.edit(embed=embed, view=self)
+            await self.safe_refresh_message(interaction.message)
         else:
             await interaction.followup.send("🚫 没有成熟的作物。", ephemeral=True)
 
@@ -629,9 +634,7 @@ class FarmDashboardView(View):
         await add_farm_plot(self.user_id, current)
         
         await interaction.followup.send(f"✅ 扩建成功！花费 {price} 喵币。", ephemeral=True)
-        # 刷新界面
-        embed = await render_farm_embed(self.user_id, self.user_name, self.user_avatar)
-        await interaction.message.edit(embed=embed, view=self)
+        await self.safe_refresh_message(interaction.message)
 
     @discord.ui.button(label="偷菜", style=discord.ButtonStyle.danger, emoji="😈", row=2)
     async def steal_btn(self, button, interaction):
