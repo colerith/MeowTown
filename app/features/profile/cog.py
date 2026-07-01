@@ -4,6 +4,7 @@ from discord.ext import commands
 from app.features.profile import repository
 from app.features.profile import service as profile_service
 from app.features.profile.ui import views as profile_ui
+from app.shared.discord_roles import grant_registered_role
 
 
 class ProfileCog(commands.Cog):
@@ -36,6 +37,7 @@ class ProfileCog(commands.Cog):
 			embed.add_field(name="💰 初始资金", value=f"{money:.2f} 喵币", inline=False)
 
 		await ctx.respond(embed=embed)
+		await grant_registered_role(ctx.author, ctx.guild)
 
 	@profile.command(name="view", description="查看我的或他人的市民档案")
 	async def view(self, ctx: discord.ApplicationContext, user: discord.Option(discord.Member, "选择要查看的市民", required=False)):

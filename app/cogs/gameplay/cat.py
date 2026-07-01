@@ -13,8 +13,8 @@ from app.cogs.gameplay.shop import open_bag_panel, open_shop_panel
 from app.cogs.gameplay.title import open_title_panel
 from app.db.repositories.user_repo import create_citizen, get_citizen, get_citizen_profile_summary, update_citizen_look, update_money
 from app.shared.data.cat_data import generate_cat_identity
+from app.shared.discord_roles import REGISTERED_ROLE_ID, grant_registered_role
 
-REGISTERED_ROLE_ID = 1521848592476668005
 MAGIC_REROLL_COST = 2000
 TOWN_GROUP = discord.SlashCommandGroup("喵喵小镇", "喵喵小镇市民系统")
 
@@ -188,13 +188,7 @@ class Cat(commands.Cog):
         embed.set_footer(text="如果不满意长相，可以去神秘魔法屋找巫师整容哦~")
         await ctx.respond(embed=embed)
 
-        if ctx.guild:
-            role = ctx.guild.get_role(REGISTERED_ROLE_ID)
-            if role:
-                try:
-                    await ctx.author.add_roles(role, reason="新注册喵喵自动发放身份组")
-                except discord.HTTPException:
-                    pass
+        await grant_registered_role(ctx.author, ctx.guild)
 
     @citizen.command(name="档案", description="查看我的市民档案")
     async def profile(self, ctx: discord.ApplicationContext):
