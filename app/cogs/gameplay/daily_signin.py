@@ -192,8 +192,8 @@ class DailySigninView(View):
 class DailySignin(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.panel_lock = asyncio.Lock()
-        self.panel_view = DailySigninView(self)
+        self.panel_lock = None
+        self.panel_view = None
         self.runtime_ready = False
 
     def cog_unload(self):
@@ -203,6 +203,8 @@ class DailySignin(commands.Cog):
     async def ensure_runtime_ready(self):
         if self.runtime_ready:
             return
+        self.panel_lock = self.panel_lock or asyncio.Lock()
+        self.panel_view = self.panel_view or DailySigninView(self)
         self.bot.add_view(self.panel_view)
         if not self.panel_maintainer.is_running():
             self.panel_maintainer.start()
@@ -223,6 +225,8 @@ class DailySignin(commands.Cog):
         return panel_messages[0] if panel_messages else None
 
     async def ensure_panel_bottom(self):
+        if self.panel_lock is None or self.panel_view is None:
+            await self.ensure_runtime_ready()
         async with self.panel_lock:
             channel = self.bot.get_channel(SIGNIN_CHANNEL_ID)
             if channel is None:
@@ -265,6 +269,25 @@ class DailySignin(commands.Cog):
                     await new_panel_message.edit(embed=await build_checkin_embed(), view=self.panel_view)
                 except Exception:
                     pass
+
+    async def force_send_panel(self):
+        if self.panel_lock is None or self.panel_view is None:
+            await self.ensure_runtime_ready()
+        async with self.panel_lock:
+            channel = self.bot.get_channel(SIGNIN_CHANNEL_ID)
+            if channel is None:
+                return None
+
+            panel_messages = await self.find_panel_messages(channel)
+            new_panel_message = await channel.send(embed=await build_checkin_embed(), view=self.panel_view)
+
+            for message in panel_messages:
+                try:
+                    await message.delete()
+                except Exception:
+                    pass
+
+            return new_panel_message
 
     @tasks.loop(minutes=10)
     async def panel_maintainer(self):

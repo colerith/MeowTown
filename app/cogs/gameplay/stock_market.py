@@ -538,8 +538,8 @@ class StockMarket(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.runtime_ready = False
-        self.compensation_view = CompensationClaimView()
-        self.panel_lock = asyncio.Lock()
+        self.compensation_view = None
+        self.panel_lock = None
 
     def cog_unload(self):
         if self.market_update.is_running():
@@ -548,6 +548,8 @@ class StockMarket(commands.Cog):
     async def ensure_runtime_ready(self):
         if self.runtime_ready:
             return
+        self.panel_lock = self.panel_lock or asyncio.Lock()
+        self.compensation_view = self.compensation_view or CompensationClaimView()
         self.bot.add_view(self.compensation_view)
         if not self.market_update.is_running():
             self.market_update.start()
@@ -611,6 +613,8 @@ class StockMarket(commands.Cog):
         return panel_messages
 
     async def ensure_news_panel_stack_bottom(self, channel=None, embed=None):
+        if self.panel_lock is None:
+            await self.ensure_runtime_ready()
         async with self.panel_lock:
             channel = channel or self.bot.get_channel(NEWS_CHANNEL_ID)
             if channel is None:
@@ -653,6 +657,26 @@ class StockMarket(commands.Cog):
                         await message.delete()
                     except Exception:
                         pass
+
+            return ordered_panel
+
+    async def force_send_news_panel(self):
+        if self.panel_lock is None:
+            await self.ensure_runtime_ready()
+        async with self.panel_lock:
+            channel = self.bot.get_channel(NEWS_CHANNEL_ID)
+            if channel is None:
+                return None
+
+            embed, _now_str = await build_stock_news_embed()
+            panel_messages = await self.find_stock_panel_messages(channel)
+            ordered_panel = await channel.send(embed=embed)
+
+            for message in panel_messages:
+                try:
+                    await message.delete()
+                except Exception:
+                    pass
 
             return ordered_panel
 

@@ -5,6 +5,7 @@ from app.cogs.gameplay.stock_market import (
     CompensationConfigView,
     create_stock_market_dashboard,
 )
+from app.cogs.gameplay.daily_signin import SIGNIN_CHANNEL_ID
 from app.cogs.gameplay.farm import create_farm_dashboard
 from app.cogs.gameplay.monopoly import create_monopoly_dashboard
 from app.cogs.gameplay.ranking import create_ranking_dashboard
@@ -315,6 +316,40 @@ class Cat(commands.Cog):
             f"✅ 身份组补发完成。\n新增: **{result['granted']}**\n"
             f"已拥有: **{result['skipped_existing']}**\n"
             f"不在服务器: **{result['skipped_missing']}**\n失败: **{result['failed']}**",
+            ephemeral=True,
+        )
+
+    @citizen.command(name="发送签到面板", description="【仅限管理员】手动重发每日签到面板")
+    @commands.is_owner()
+    async def send_signin_panel(self, ctx: discord.ApplicationContext):
+        await ctx.defer(ephemeral=True)
+        signin_cog = self.bot.get_cog("DailySignin")
+        if signin_cog is None:
+            return await ctx.followup.send("🚫 签到模块未加载。", ephemeral=True)
+
+        message = await signin_cog.force_send_panel()
+        if message is None:
+            return await ctx.followup.send("🚫 未找到目标频道，签到面板发送失败。", ephemeral=True)
+
+        await ctx.followup.send(
+            f"✅ 已手动重发签到面板到频道 **{SIGNIN_CHANNEL_ID}**。\n消息 ID: `{message.id}`",
+            ephemeral=True,
+        )
+
+    @citizen.command(name="发送股市面板", description="【仅限管理员】手动重发股市快讯面板")
+    @commands.is_owner()
+    async def send_stock_panel(self, ctx: discord.ApplicationContext):
+        await ctx.defer(ephemeral=True)
+        stock_cog = self.bot.get_cog("StockMarket")
+        if stock_cog is None:
+            return await ctx.followup.send("🚫 股市模块未加载。", ephemeral=True)
+
+        message = await stock_cog.force_send_news_panel()
+        if message is None:
+            return await ctx.followup.send("🚫 未找到目标频道，股市面板发送失败。", ephemeral=True)
+
+        await ctx.followup.send(
+            f"✅ 已手动重发股市快讯面板到频道 **{SIGNIN_CHANNEL_ID}**。\n消息 ID: `{message.id}`",
             ephemeral=True,
         )
 
