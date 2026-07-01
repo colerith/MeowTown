@@ -155,7 +155,7 @@ class DailySigninView(View):
         user = await get_citizen(interaction.user.id)
         if not user:
             return await interaction.response.send_message(
-                "🚫 仅限已注册喵喵签到，请先使用 `/市民 注册`。",
+                "🚫 仅限已注册喵喵签到，请先使用 `/喵喵小镇 注册`。",
                 ephemeral=True,
             )
 

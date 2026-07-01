@@ -159,7 +159,7 @@ class Cat(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    citizen = discord.SlashCommandGroup("市民", "喵喵小镇市民系统")
+    citizen = discord.SlashCommandGroup("喵喵小镇", "喵喵小镇市民系统")
 
     @citizen.command(name="注册", description="登记身份，入住喵喵小镇！(仅限初次)")
     async def register(self, ctx: discord.ApplicationContext, 
@@ -199,7 +199,7 @@ class Cat(commands.Cog):
     async def profile(self, ctx: discord.ApplicationContext):
         summary = await get_citizen_profile_summary(ctx.author.id)
         if not summary:
-            await ctx.respond("🚫 你还不是小镇居民！请先使用 `/市民 注册 [名字]` 登记。", ephemeral=True)
+            await ctx.respond("🚫 你还不是小镇居民！请先使用 `/喵喵小镇 注册 [名字]` 登记。", ephemeral=True)
             return
 
         user = summary["citizen"]

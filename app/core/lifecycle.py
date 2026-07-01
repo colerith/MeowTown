@@ -44,7 +44,7 @@ def register_lifecycle_events(bot: discord.Bot, logger, owner_ids: list[int]) ->
 
         if isinstance(error, discord.errors.CheckFailure):
             await ctx.respond(
-                "🚫 **访问被拒绝**\n你还没有领养喵喵！请先使用 `/市民 注册` 办理入住手续。",
+                "🚫 **访问被拒绝**\n你还没有领养喵喵！请先使用 `/喵喵小镇 注册` 办理入住手续。",
                 ephemeral=True,
             )
             cmd_name = ctx.command.name if ctx.command else "未知命令"

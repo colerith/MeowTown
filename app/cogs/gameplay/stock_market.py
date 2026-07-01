@@ -140,7 +140,7 @@ class CompensationAnnouncementConfig:
     )
     compensation_text: str = "已注册喵喵可免费领取 **2 个企业股票**，每个企业 **100 股**。"
     rules_text: str = (
-        "1. 仅限已完成 `/市民 注册` 的喵喵领取\n"
+        "1. 仅限已完成 `/喵喵小镇 注册` 的喵喵领取\n"
         "2. 每位喵喵仅可领取一次\n"
         "3. 可选企业：咸鱼海运、猫薄荷生物、逗猫棒重工、纸箱地产"
     )
@@ -253,7 +253,7 @@ class CompensationStockSelect(Select):
         user = await get_citizen(interaction.user.id)
         if not user:
             return await interaction.response.send_message(
-                "🚫 仅限已注册喵喵领取，请先使用 `/市民 注册`。",
+                "🚫 仅限已注册喵喵领取，请先使用 `/喵喵小镇 注册`。",
                 ephemeral=True,
             )
 
@@ -292,7 +292,7 @@ class CompensationClaimView(View):
         user = await get_citizen(interaction.user.id)
         if not user:
             return await interaction.response.send_message(
-                "🚫 仅限已注册喵喵领取，请先使用 `/市民 注册`。",
+                "🚫 仅限已注册喵喵领取，请先使用 `/喵喵小镇 注册`。",
                 ephemeral=True,
             )
 
