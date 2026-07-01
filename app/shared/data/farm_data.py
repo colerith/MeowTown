@@ -81,3 +81,45 @@ def calculate_harvest(plant_id):
     plant = PLANTS[plant_id]
     profit = random.randint(plant["min"], plant["max"])
     return profit
+
+
+FARM_FERTILIZERS = {
+    "小包催熟粉": {"name": "小包催熟粉", "seconds": 600, "icon": "🧂"},
+    "金坷垃": {"name": "金坷垃", "seconds": 3600, "icon": "🧪"},
+    "超级金坷垃": {"name": "超级金坷垃", "seconds": 18000, "icon": "💉"},
+    "火箭燃素": {"name": "火箭燃素", "seconds": 43200, "icon": "🚀"},
+}
+
+
+FARM_GUARDS = {
+    "scarecrow": {
+        "name": "稻草人",
+        "icon": "🪆",
+        "price": 1200,
+        "duration_hours": 12,
+        "block_rate": 0.35,
+        "penalty_min": 80,
+        "penalty_max": 180,
+        "penalty_text": "被吓得摔进泥坑，赔了点医药费",
+    },
+    "dog": {
+        "name": "巡逻狗狗",
+        "icon": "🐕",
+        "price": 3600,
+        "duration_hours": 24,
+        "block_rate": 0.65,
+        "penalty_min": 200,
+        "penalty_max": 500,
+        "penalty_text": "被狗狗追了三条街，还被咬破了钱包",
+    },
+    "soldier": {
+        "name": "值夜士兵",
+        "icon": "🪖",
+        "price": 8800,
+        "duration_hours": 36,
+        "block_rate": 0.85,
+        "penalty_min": 600,
+        "penalty_max": 1200,
+        "penalty_text": "被当场按住教育，还缴了一大笔罚金",
+    },
+}

@@ -2,6 +2,8 @@ import aiosqlite
 
 from app.db.engine import DB_PATH
 
+DEFAULT_PROPERTY_MAINTENANCE_INTERVAL = 7 * 24 * 60 * 60
+
 
 async def ensure_player(user_id):
     async with aiosqlite.connect(DB_PATH) as db:
@@ -65,7 +67,7 @@ async def get_property_owner(map_id):
 async def get_property_state(map_id):
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute(
-            "SELECT owner_id, level, effect FROM monopoly_properties WHERE map_id = ?",
+            "SELECT owner_id, level, effect, purchase_price, maintenance_due_at FROM monopoly_properties WHERE map_id = ?",
             (map_id,),
         )
         return await cursor.fetchone()
@@ -74,7 +76,7 @@ async def get_property_state(map_id):
 async def get_owned_properties(user_id):
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute(
-            "SELECT map_id, level FROM monopoly_properties WHERE owner_id = ?",
+            "SELECT map_id, level, maintenance_due_at FROM monopoly_properties WHERE owner_id = ? ORDER BY map_id",
             (user_id,),
         )
         return await cursor.fetchall()
@@ -146,10 +148,49 @@ async def buy_property(user_id, map_id, price):
         if money < price:
             return False, "insufficient"
 
+        cursor = await db.execute("SELECT strftime('%s','now')")
+        now_ts = int((await cursor.fetchone())[0])
         await db.execute("UPDATE users SET money = money - ? WHERE user_id = ?", (price, user_id))
-        await db.execute("INSERT INTO monopoly_properties (map_id, owner_id, level) VALUES (?, ?, ?)", (map_id, user_id, 1))
+        await db.execute(
+            """
+            INSERT INTO monopoly_properties (map_id, owner_id, level, purchase_price, maintenance_due_at, maintenance_notice_sent)
+            VALUES (?, ?, ?, ?, ?, 0)
+            """,
+            (map_id, user_id, 1, price, now_ts + DEFAULT_PROPERTY_MAINTENANCE_INTERVAL),
+        )
         await db.commit()
         return True, None
+
+
+async def maintain_all_properties(user_id, fee_per_property, next_due_at):
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "SELECT map_id, purchase_price FROM monopoly_properties WHERE owner_id = ?",
+            (user_id,),
+        )
+        rows = await cursor.fetchall()
+        property_count = len(rows)
+        if property_count == 0:
+            return False, "no_properties", 0
+
+        total_fee = property_count * fee_per_property
+        cursor = await db.execute("SELECT money FROM users WHERE user_id = ?", (user_id,))
+        row = await cursor.fetchone()
+        money = row[0] if row else 0
+        if money < total_fee:
+            return False, "insufficient", total_fee
+
+        await db.execute("UPDATE users SET money = money - ? WHERE user_id = ?", (total_fee, user_id))
+        await db.execute(
+            """
+            UPDATE monopoly_properties
+            SET maintenance_due_at = ?, maintenance_notice_sent = 0
+            WHERE owner_id = ?
+            """,
+            (next_due_at, user_id),
+        )
+        await db.commit()
+        return True, rows, total_fee
 
 
 async def pay_bail(user_id, bail_cost):
@@ -204,6 +245,54 @@ async def place_roadblock(map_id):
         await db.commit()
 
 
+async def get_properties_needing_maintenance_notice(current_time, reminder_threshold):
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            """
+            SELECT map_id, owner_id, level, purchase_price, maintenance_due_at
+            FROM monopoly_properties
+            WHERE owner_id IS NOT NULL
+              AND maintenance_due_at > ?
+              AND maintenance_due_at <= ?
+              AND maintenance_notice_sent = 0
+            ORDER BY maintenance_due_at ASC
+            """,
+            (current_time, current_time + reminder_threshold),
+        )
+        return await cursor.fetchall()
+
+
+async def mark_property_maintenance_notice_sent(map_id):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "UPDATE monopoly_properties SET maintenance_notice_sent = 1 WHERE map_id = ?",
+            (map_id,),
+        )
+        await db.commit()
+
+
+async def reclaim_expired_properties(current_time, refund_ratio):
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            """
+            SELECT map_id, owner_id, purchase_price
+            FROM monopoly_properties
+            WHERE owner_id IS NOT NULL AND maintenance_due_at > 0 AND maintenance_due_at <= ?
+            """,
+            (current_time,),
+        )
+        rows = await cursor.fetchall()
+        reclaimed = []
+        for map_id, owner_id, purchase_price in rows:
+            refund = round(float(purchase_price or 0) * refund_ratio, 2)
+            if refund > 0:
+                await db.execute("UPDATE users SET money = money + ? WHERE user_id = ?", (refund, owner_id))
+            await db.execute("DELETE FROM monopoly_properties WHERE map_id = ?", (map_id,))
+            reclaimed.append((map_id, owner_id, float(purchase_price or 0), refund))
+        await db.commit()
+        return reclaimed
+
+
 __all__ = [
     "activate_next_dice_fixed",
     "bankrupt_player",
@@ -215,13 +304,17 @@ __all__ = [
     "get_owned_properties",
     "get_player_state",
     "get_player_position",
+    "get_properties_needing_maintenance_notice",
     "get_property_owner",
     "get_property_state",
+    "maintain_all_properties",
+    "mark_property_maintenance_notice_sent",
     "move_player",
     "move_player_with_pass_go",
     "pay_bail",
     "pay_rent",
     "place_roadblock",
+    "reclaim_expired_properties",
     "release_from_jail",
     "send_player_to_jail",
     "upgrade_property",

@@ -4,19 +4,32 @@ import time
 import random
 import asyncio
 from discord.ext import commands, tasks
-from discord.ui import View, Select, Button
+from discord.ui import View, Select, Button, InputText, Modal
 from app.db.repositories.farm_repo import (
     accelerate_farm_growth,
     add_farm_plot,
     clear_plot,
+    get_expired_farm_guards,
     get_all_active_farms,
+    get_all_farming_users,
+    get_farm_guard,
     get_farm_state,
+    mark_farm_guard_notice_sent,
     mark_farm_notified,
     plant_seed,
+    remove_farm_guard,
+    set_farm_guard,
 )
 from app.db.repositories.inventory_repo import add_item, get_items, use_item_from_db
 from app.db.repositories.user_repo import get_citizen, update_money
-from app.shared.data.farm_data import PLANTS, get_plant_by_name, calculate_harvest, RARITY
+from app.shared.data.farm_data import (
+    FARM_FERTILIZERS,
+    FARM_GUARDS,
+    PLANTS,
+    RARITY,
+    calculate_harvest,
+    get_plant_by_name,
+)
 from app.shared.data.shop_data import SHOP_ITEMS
 
 # 土地扩建价格表
@@ -26,9 +39,10 @@ LAND_PRICES = {
 
 # --- 辅助函数：生成农场状态 Embed ---
 async def render_farm_embed(user_id, user_name, avatar_url):
-    plots = await get_farm_state(user_id)
     current_time = int(time.time())
+    plots = await get_farm_state(user_id)
     plots.sort(key=lambda x: x[1])
+    guard = await get_farm_guard(user_id, current_time=current_time)
     
     embed = discord.Embed(title=f"🏡 {user_name} 的喵喵农场", color=0x2ecc71)
     embed.set_image(url="https://i.postimg.cc/L4C09ts2/farm.png")
@@ -80,8 +94,26 @@ async def render_farm_embed(user_id, user_name, avatar_url):
         footer_text += f" | 下块地: {next_price}喵币"
     else:
         footer_text += " | 土地已满"
-        
+
     embed.set_footer(text=footer_text)
+    if guard:
+        guard_type, expires_at = guard
+        guard_info = FARM_GUARDS.get(guard_type)
+        if guard_info:
+            left_seconds = max(0, expires_at - current_time)
+            left_hours = left_seconds // 3600
+            left_minutes = (left_seconds % 3600) // 60
+            embed.add_field(
+                name="🛡️ 农场护卫",
+                value=(
+                    f"{guard_info['icon']} **{guard_info['name']}**\n"
+                    f"拦截概率: **{int(guard_info['block_rate'] * 100)}%**\n"
+                    f"剩余时间: **{left_hours}小时{left_minutes}分**"
+                ),
+                inline=False,
+            )
+    else:
+        embed.add_field(name="🛡️ 农场护卫", value="当前未租赁护卫，容易被偷菜。", inline=False)
     return embed
 
 # --- UI 组件：种子/道具选择菜单 ---
@@ -228,18 +260,7 @@ class FarmShopView(View):
 
     async def action_buy_tool(self, interaction: discord.Interaction):
         if not self.selected_item: return
-        item_name = self.selected_item
-        item = SHOP_ITEMS[item_name]
-        user_id = interaction.user.id
-        
-        user = await get_citizen(user_id)
-        if user[4] < item['price']:
-            return await interaction.response.send_message("🚫 余额不足！", ephemeral=True)
-            
-        await update_money(user_id, -item['price'])
-        await add_item(user_id, item_name, 1)
-        
-        await interaction.response.send_message(f"✅ 成功购买 **{item['name']}**！已放入背包。", ephemeral=True)
+        await interaction.response.send_modal(FarmToolBuyModal(self.user_id, self.selected_item))
 
     async def action_plant(self, interaction: discord.Interaction, count):
         if not self.selected_item:
@@ -273,6 +294,105 @@ class FarmShopView(View):
             await plant_seed(user_id, empty_plots[i], self.selected_item, now)
             
         await interaction.response.send_message(f"✅ 成功种植了 {real_count} 棵 {plant['name']}，花费 {total_cost} 喵币。", ephemeral=True)
+
+
+class FarmToolBuyModal(Modal):
+    def __init__(self, user_id, item_name):
+        super().__init__(title=f"购买 {item_name}")
+        self.user_id = user_id
+        self.item_name = item_name
+        self.add_item(InputText(label="购买数量", value="1", placeholder="请输入 1-999 的整数"))
+
+    async def callback(self, interaction: discord.Interaction):
+        try:
+            quantity = int(self.children[0].value)
+        except ValueError:
+            return await interaction.response.send_message("❌ 请输入 1-999 的整数。", ephemeral=True)
+
+        if quantity < 1 or quantity > 999:
+            return await interaction.response.send_message("❌ 单次购买数量必须在 1 到 999 之间。", ephemeral=True)
+
+        item = SHOP_ITEMS[self.item_name]
+        total_cost = item["price"] * quantity
+        user = await get_citizen(self.user_id)
+        if user[4] < total_cost:
+            return await interaction.response.send_message(
+                f"🚫 余额不足！购买 **{quantity}** 个需要 **{total_cost}** 喵币。",
+                ephemeral=True,
+            )
+
+        await update_money(self.user_id, -total_cost)
+        await add_item(self.user_id, self.item_name, quantity)
+        await interaction.response.send_message(
+            f"✅ 成功购买 **{self.item_name} x{quantity}**，花费 **{total_cost}** 喵币。",
+            ephemeral=True,
+        )
+
+
+class GuardRentSelect(Select):
+    def __init__(self, user_id, user_name, user_avatar):
+        self.user_id = user_id
+        self.user_name = user_name
+        self.user_avatar = user_avatar
+        options = [
+            discord.SelectOption(
+                label=guard["name"],
+                value=guard_key,
+                description=(
+                    f"💰{guard['price']} | 拦截{int(guard['block_rate'] * 100)}% | "
+                    f"{guard['duration_hours']}小时"
+                ),
+                emoji=guard["icon"],
+            )
+            for guard_key, guard in FARM_GUARDS.items()
+        ]
+        super().__init__(placeholder="选择要租赁的护卫...", min_values=1, max_values=1, options=options)
+
+    async def callback(self, interaction: discord.Interaction):
+        guard_key = self.values[0]
+        guard = FARM_GUARDS[guard_key]
+        user = await get_citizen(self.user_id)
+        if user[4] < guard["price"]:
+            return await interaction.response.send_message(
+                f"🚫 余额不足！租赁 **{guard['name']}** 需要 **{guard['price']}** 喵币。",
+                ephemeral=True,
+            )
+
+        await update_money(self.user_id, -guard["price"])
+        expires_at = int(time.time()) + guard["duration_hours"] * 3600
+        await set_farm_guard(self.user_id, guard_key, expires_at)
+        embed = await render_farm_embed(self.user_id, self.user_name, self.user_avatar)
+        await interaction.response.send_message(
+            f"🛡️ 已成功租赁 **{guard['icon']} {guard['name']}**，持续 **{guard['duration_hours']}** 小时。",
+            ephemeral=True,
+        )
+        if interaction.message:
+            await interaction.message.edit(embed=embed, view=FarmDashboardView(self.user_id, self.user_name, self.user_avatar))
+
+
+class GuardRentView(View):
+    def __init__(self, user_id, user_name, user_avatar):
+        super().__init__(timeout=120)
+        self.add_item(GuardRentSelect(user_id, user_name, user_avatar))
+
+
+class StealTargetModal(Modal):
+    def __init__(self, parent_view):
+        super().__init__(title="指定用户偷菜")
+        self.parent_view = parent_view
+        self.add_item(InputText(label="目标用户 ID", placeholder="请输入对方的 Discord 用户 ID"))
+
+    async def callback(self, interaction: discord.Interaction):
+        raw = self.children[0].value.strip()
+        if not raw.isdigit():
+            return await interaction.response.send_message("❌ 请输入有效的用户 ID。", ephemeral=True)
+
+        target_user_id = int(raw)
+        if target_user_id == self.parent_view.user_id:
+            return await interaction.response.send_message("❓ 你不能偷自己的菜。", ephemeral=True)
+
+        result = await self.parent_view.execute_steal(interaction, target_user_id=target_user_id, random_target=False)
+        await interaction.response.send_message(result, ephemeral=True)
 
 # --- UI 组件：主控面板 ---
 
@@ -340,7 +460,7 @@ class FarmDashboardView(View):
         if interaction.user.id != self.user_id: return
         
         items = await get_items(self.user_id)
-        farm_items = [i for i in items if i[0] in ["金坷垃", "超级金坷垃"]]
+        farm_items = [i for i in items if i[0] in FARM_FERTILIZERS]
         
         if not farm_items:
             return await interaction.response.send_message("🎒 你的农资背包空空如也！请点击【农场商店】购买化肥。", ephemeral=True)
@@ -357,17 +477,16 @@ class FarmDashboardView(View):
         
         await interaction.response.defer(ephemeral=True)
 
-        has_normal = await use_item_from_db(self.user_id, "金坷垃")
-        if has_normal:
-            reduce = 3600
-            name = "金坷垃"
-        else:
-            has_super = await use_item_from_db(self.user_id, "超级金坷垃")
-            if has_super:
-                reduce = 18000
-                name = "超级金坷垃"
-            else:
-                return await interaction.followup.send("🚫 你没有化肥！请点击【农场商店】购买。", ephemeral=True)
+        name = None
+        reduce = None
+        for item_name, data in sorted(FARM_FERTILIZERS.items(), key=lambda item: item[1]["seconds"], reverse=True):
+            if await use_item_from_db(self.user_id, item_name):
+                name = item_name
+                reduce = data["seconds"]
+                break
+
+        if reduce is None:
+            return await interaction.followup.send("🚫 你没有化肥！请点击【农场商店】购买。", ephemeral=True)
         
         await accelerate_farm_growth(self.user_id, reduce)
             
@@ -403,6 +522,101 @@ class FarmDashboardView(View):
         # 刷新界面
         embed = await render_farm_embed(self.user_id, self.user_name, self.user_avatar)
         await interaction.message.edit(embed=embed, view=self)
+
+    @discord.ui.button(label="偷菜", style=discord.ButtonStyle.danger, emoji="😈", row=2)
+    async def steal_btn(self, button, interaction):
+        if interaction.user.id != self.user_id:
+            return await interaction.response.send_message("这不是你的农场！", ephemeral=True)
+
+        view = View(timeout=120)
+        random_btn = Button(label="随机偷菜", style=discord.ButtonStyle.danger, emoji="🎲")
+        target_btn = Button(label="指定用户", style=discord.ButtonStyle.secondary, emoji="🎯")
+
+        async def random_callback(inner_interaction):
+            result = await self.execute_steal(inner_interaction, random_target=True)
+            await inner_interaction.response.send_message(result, ephemeral=True)
+
+        async def target_callback(inner_interaction):
+            await inner_interaction.response.send_modal(StealTargetModal(self))
+
+        random_btn.callback = random_callback
+        target_btn.callback = target_callback
+        view.add_item(random_btn)
+        view.add_item(target_btn)
+        await interaction.response.send_message("选择偷菜方式：", view=view, ephemeral=True)
+
+    @discord.ui.button(label="租赁护卫", style=discord.ButtonStyle.primary, emoji="🛡️", row=2)
+    async def guard_btn(self, button, interaction):
+        if interaction.user.id != self.user_id:
+            return await interaction.response.send_message("这不是你的农场！", ephemeral=True)
+        embed = discord.Embed(title="🛡️ 农场护卫租赁", description="选择一位护卫守住你的农场。", color=0x5865F2)
+        await interaction.response.send_message(
+            embed=embed,
+            view=GuardRentView(self.user_id, self.user_name, self.user_avatar),
+            ephemeral=True,
+        )
+
+    async def execute_steal(self, interaction: discord.Interaction, target_user_id=None, random_target=False):
+        current_time = int(time.time())
+        if random_target:
+            candidate_ids = await get_all_farming_users(exclude_user_id=self.user_id)
+            mature_candidates = []
+            for user_id in candidate_ids:
+                plots = await get_farm_state(user_id)
+                has_mature = any(
+                    row[2] and (current_time - row[3]) >= PLANTS[row[2]]["time"]
+                    for row in plots
+                )
+                if has_mature:
+                    mature_candidates.append(user_id)
+
+            if not mature_candidates:
+                return "🚫 当前没有可下手的成熟农场。"
+            target_user_id = random.choice(mature_candidates)
+
+        if target_user_id is None:
+            return "🚫 未找到目标用户。"
+
+        try:
+            target = await interaction.client.fetch_user(target_user_id)
+        except Exception:
+            return "🚫 未找到目标用户。"
+        plots = await get_farm_state(target_user_id)
+        stealable = []
+        for row in plots:
+            if row[2]:
+                plant = PLANTS[row[2]]
+                if (current_time - row[3]) >= plant["time"]:
+                    stealable.append(row)
+
+        if not stealable:
+            return f"🚫 {target.display_name} 的农场现在没有成熟作物，偷不到。"
+
+        guard = await get_farm_guard(target_user_id, current_time=current_time)
+        if guard:
+            guard_type, _expires_at = guard
+            guard_info = FARM_GUARDS.get(guard_type)
+            if guard_info and random.random() < guard_info["block_rate"]:
+                penalty = random.randint(guard_info["penalty_min"], guard_info["penalty_max"])
+                await update_money(self.user_id, -penalty)
+                return (
+                    f"{guard_info['icon']} **{guard_info['name']}** 成功拦下了你！\n"
+                    f"{guard_info['penalty_text']}，你损失了 **{penalty}** 喵币。"
+                )
+
+        target_plot = random.choice(stealable)
+        plant_id = target_plot[2]
+        plant = PLANTS[plant_id]
+
+        if random.random() > 0.4:
+            income = int(calculate_harvest(plant_id) * 0.8)
+            await clear_plot(target_user_id, target_plot[1])
+            await update_money(self.user_id, income)
+            return f"😈 你偷到了 **{target.display_name}** 的 **{plant['name']}**！卖了 **{income}** 喵币。"
+
+        fine = 200
+        await update_money(self.user_id, -fine)
+        return f"🐕 你偷菜失手，被 **{target.display_name}** 抓了个正着！罚款 **{fine}** 喵币。"
 
 
 async def create_farm_dashboard(user: discord.abc.User):
@@ -446,6 +660,29 @@ class Farm(commands.Cog):
                     await user.send(embed=embed)
             except Exception as e:
                 pass
+
+        expired_guards = await get_expired_farm_guards(current_time)
+        for user_id, guard_type, _expires_at in expired_guards:
+            guard = FARM_GUARDS.get(guard_type)
+            if not guard:
+                await mark_farm_guard_notice_sent(user_id)
+                await remove_farm_guard(user_id)
+                continue
+
+            try:
+                user = await self.bot.fetch_user(user_id)
+                if user:
+                    embed = discord.Embed(title="🛡️ 护卫租赁到期提醒", color=0xE67E22)
+                    embed.description = (
+                        f"你租赁的 **{guard['icon']} {guard['name']}** 已经到期，农场重新暴露在偷菜风险中。\n"
+                        f"记得回到农场面板重新租赁护卫哦。"
+                    )
+                    await user.send(embed=embed)
+            except Exception:
+                pass
+            finally:
+                await mark_farm_guard_notice_sent(user_id)
+                await remove_farm_guard(user_id)
 
     @crop_checker.before_loop
     async def before_checker(self):

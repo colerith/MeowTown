@@ -17,6 +17,7 @@ from app.db.repositories.user_repo import (
     update_citizen_name,
     update_money,
 )
+from app.shared.data.farm_data import FARM_FERTILIZERS
 from app.shared.data.map_data import get_map_tile
 from app.shared.data.shop_data import SHOP_ITEMS
 
@@ -157,8 +158,8 @@ class BagUseSelect(Select):
         if item_name == "改名卡":
             return await interaction.response.send_modal(RenameModal(self.user_id))
 
-        if item_name in ["金坷垃", "超级金坷垃"]:
-            reduce_time = 3600 if item_name == "金坷垃" else 18000
+        if item_name in FARM_FERTILIZERS:
+            reduce_time = FARM_FERTILIZERS[item_name]["seconds"]
             await accelerate_farm_growth(self.user_id, reduce_time)
             return await interaction.response.send_message(
                 f"🧪 撒下了 **{item_name}**！你的农场作物距离成熟更近了。",

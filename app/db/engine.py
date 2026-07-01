@@ -68,6 +68,27 @@ async def setup_db():
 		)
 		await db.execute(
 			"""
+			CREATE TABLE IF NOT EXISTS farm_guards (
+				user_id INTEGER PRIMARY KEY,
+				guard_type TEXT NOT NULL,
+				expires_at INTEGER NOT NULL,
+				expired_notice_sent INTEGER DEFAULT 0
+			)
+			"""
+		)
+		await db.execute(
+			"""
+			CREATE TABLE IF NOT EXISTS daily_signins (
+				user_id INTEGER PRIMARY KEY,
+				last_signin_date TEXT NOT NULL,
+				total_signin_count INTEGER DEFAULT 0,
+				last_reward INTEGER DEFAULT 0,
+				updated_at TEXT NOT NULL
+			)
+			"""
+		)
+		await db.execute(
+			"""
 			CREATE TABLE IF NOT EXISTS stock_compensation_claims (
 				user_id INTEGER PRIMARY KEY,
 				stock_ids TEXT NOT NULL,
@@ -94,7 +115,10 @@ async def setup_db():
 				map_id INTEGER PRIMARY KEY,
 				owner_id INTEGER,
 				level INTEGER DEFAULT 0,
-				effect TEXT
+				effect TEXT,
+				purchase_price REAL DEFAULT 0,
+				maintenance_due_at INTEGER DEFAULT 0,
+				maintenance_notice_sent INTEGER DEFAULT 0
 			)
 			"""
 		)
@@ -145,7 +169,30 @@ async def setup_db():
 		except Exception:
 			pass
 		try:
+			await db.execute("ALTER TABLE monopoly_properties ADD COLUMN purchase_price REAL DEFAULT 0")
+		except Exception:
+			pass
+		try:
+			await db.execute("ALTER TABLE monopoly_properties ADD COLUMN maintenance_due_at INTEGER DEFAULT 0")
+		except Exception:
+			pass
+		try:
+			await db.execute("ALTER TABLE monopoly_properties ADD COLUMN maintenance_notice_sent INTEGER DEFAULT 0")
+		except Exception:
+			pass
+		await db.execute(
+			"""
+			UPDATE monopoly_properties
+			SET maintenance_due_at = CAST(strftime('%s','now') AS INTEGER) + 604800
+			WHERE owner_id IS NOT NULL AND (maintenance_due_at IS NULL OR maintenance_due_at <= 0)
+			"""
+		)
+		try:
 			await db.execute("ALTER TABLE farms ADD COLUMN is_notified INTEGER DEFAULT 0")
+		except Exception:
+			pass
+		try:
+			await db.execute("ALTER TABLE farm_guards ADD COLUMN expired_notice_sent INTEGER DEFAULT 0")
 		except Exception:
 			pass
 

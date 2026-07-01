@@ -7,6 +7,7 @@ import aiosqlite
 
 from app.db import engine
 from app.db.repositories import (
+    daily_repo,
     farm_repo,
     inventory_repo,
     monopoly_repo,
@@ -20,6 +21,7 @@ from app.features.profile import repository as profile_repository
 
 PATCHED_MODULES = [
     engine,
+    daily_repo,
     farm_repo,
     inventory_repo,
     monopoly_repo,
@@ -125,6 +127,46 @@ class FarmRepositoryTests(RepositoryIntegrationTestCase):
         rows = await farm_repo.get_farm_state(1102)
         self.assertEqual(len(rows), 5)
         self.assertEqual(sorted(row[1] for row in rows), [0, 1, 2, 3, 4])
+
+    async def test_farm_repo_tracks_farming_users_and_guards(self):
+        await self.create_user(1103, money=2000, name="Guarded")
+        await self.create_user(1104, money=2000, name="Other")
+        await farm_repo.get_farm_state(1103)
+        await farm_repo.get_farm_state(1104)
+        await farm_repo.plant_seed(1103, 0, "corn", 1000)
+        await farm_repo.plant_seed(1104, 0, "wheat", 1000)
+
+        self.assertEqual(await farm_repo.get_all_farming_users(), [1103, 1104])
+        self.assertEqual(await farm_repo.get_all_farming_users(exclude_user_id=1103), [1104])
+
+        await farm_repo.set_farm_guard(1103, "dog", 5000)
+        self.assertEqual(await farm_repo.get_farm_guard(1103, current_time=1000), ("dog", 5000))
+        self.assertIsNone(await farm_repo.get_farm_guard(1103, current_time=5000))
+        self.assertEqual(await farm_repo.get_expired_farm_guards(5000), [(1103, "dog", 5000)])
+        await farm_repo.mark_farm_guard_notice_sent(1103)
+        self.assertEqual(await farm_repo.get_expired_farm_guards(5000), [])
+        await farm_repo.remove_farm_guard(1103)
+        self.assertIsNone(await farm_repo.get_farm_guard(1103))
+
+
+class DailyRepositoryTests(RepositoryIntegrationTestCase):
+    async def test_daily_repo_records_and_counts_signins(self):
+        await self.create_user(1201, name="Daily")
+
+        self.assertIsNone(await daily_repo.get_daily_signin(1201))
+        await daily_repo.record_daily_signin(1201, "2026-07-01", 8888)
+        row = await daily_repo.get_daily_signin(1201)
+        self.assertEqual(row[0], 1201)
+        self.assertEqual(row[1], "2026-07-01")
+        self.assertEqual(row[2], 1)
+        self.assertEqual(row[3], 8888)
+        self.assertEqual(await daily_repo.count_daily_signins_by_date("2026-07-01"), 1)
+
+        await daily_repo.record_daily_signin(1201, "2026-07-02", 9999)
+        row = await daily_repo.get_daily_signin(1201)
+        self.assertEqual(row[1], "2026-07-02")
+        self.assertEqual(row[2], 2)
+        self.assertEqual(row[3], 9999)
 
 
 class StockRepositoryTests(RepositoryIntegrationTestCase):
@@ -235,7 +277,42 @@ class MonopolyRepositoryTests(RepositoryIntegrationTestCase):
         await monopoly_repo.pay_rent(3002, 3001, 300, map_id=7, clear_roadblock=True)
         self.assertAlmostEqual(await user_repo.get_user_money(3002), 2700)
         self.assertAlmostEqual(await user_repo.get_user_money(3001), 4600)
-        self.assertEqual(await monopoly_repo.get_property_state(7), (3001, 1, None))
+        property_state = await monopoly_repo.get_property_state(7)
+        self.assertEqual(property_state[:3], (3001, 1, None))
+        self.assertEqual(property_state[3], 1200)
+        self.assertGreater(property_state[4], 0)
+
+    async def test_monopoly_repo_property_maintenance_and_reclaim(self):
+        await self.create_user(3004, money=5000, name="Maintainer")
+
+        success, _ = await monopoly_repo.buy_property(3004, 11, 1000)
+        self.assertTrue(success)
+        success, _ = await monopoly_repo.buy_property(3004, 12, 1200)
+        self.assertTrue(success)
+
+        rows = await monopoly_repo.get_owned_properties(3004)
+        self.assertEqual(len(rows), 2)
+        self.assertTrue(all(row[2] > 0 for row in rows))
+
+        success, payload, total_fee = await monopoly_repo.maintain_all_properties(3004, 50, 999999)
+        self.assertTrue(success)
+        self.assertEqual(len(payload), 2)
+        self.assertEqual(total_fee, 100)
+        self.assertAlmostEqual(await user_repo.get_user_money(3004), 2700)
+
+        rows = await monopoly_repo.get_owned_properties(3004)
+        self.assertEqual(rows, [(11, 1, 999999), (12, 1, 999999)])
+
+        notice_rows = await monopoly_repo.get_properties_needing_maintenance_notice(990000, 10000)
+        self.assertEqual([row[0] for row in notice_rows], [11, 12])
+        await monopoly_repo.mark_property_maintenance_notice_sent(11)
+        await monopoly_repo.mark_property_maintenance_notice_sent(12)
+        self.assertEqual(await monopoly_repo.get_properties_needing_maintenance_notice(990000, 10000), [])
+
+        reclaimed = await monopoly_repo.reclaim_expired_properties(1000000, 0.10)
+        self.assertEqual(reclaimed, [(11, 3004, 1000.0, 100.0), (12, 3004, 1200.0, 120.0)])
+        self.assertEqual(await monopoly_repo.get_owned_property_count(3004), 0)
+        self.assertAlmostEqual(await user_repo.get_user_money(3004), 2920)
 
     async def test_monopoly_repo_jail_bail_and_bankruptcy(self):
         await self.create_user(3003, money=2000, name="Jailed")
