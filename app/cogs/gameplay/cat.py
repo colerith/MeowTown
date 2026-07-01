@@ -10,11 +10,39 @@ from app.cogs.gameplay.monopoly import create_monopoly_dashboard
 from app.cogs.gameplay.ranking import create_ranking_dashboard
 from app.cogs.gameplay.shop import open_bag_panel, open_shop_panel
 from app.cogs.gameplay.title import open_title_panel
-from app.db.repositories.user_repo import create_citizen, get_citizen, update_citizen_look, update_money
+from app.db.repositories.user_repo import create_citizen, get_citizen, get_citizen_profile_summary, update_citizen_look, update_money
 from app.shared.data.cat_data import generate_cat_identity
 
 REGISTERED_ROLE_ID = 1521848592476668005
 MAGIC_REROLL_COST = 2000
+
+
+def build_progress_bar(current_value, total_value, length=10):
+    safe_total = max(1, int(total_value))
+    ratio = min(1.0, max(0.0, current_value / safe_total))
+    filled = int(round(ratio * length))
+    return "█" * filled + "░" * (length - filled)
+
+
+def format_large_number(value):
+    abs_value = abs(float(value))
+    if abs_value >= 100000000:
+        return f"{value / 100000000:.2f}亿"
+    if abs_value >= 10000:
+        return f"{value / 10000:.2f}万"
+    return f"{value:.2f}"
+
+
+def pick_profile_color(level):
+    if level >= 300:
+        return 0xE67E22
+    if level >= 150:
+        return 0xE91E63
+    if level >= 60:
+        return 0x9B59B6
+    if level >= 20:
+        return 0x3498DB
+    return 0x2ECC71
 
 
 async def perform_magic_reroll(user_id: int):
@@ -168,31 +196,85 @@ class Cat(commands.Cog):
 
     @citizen.command(name="档案", description="查看我的市民档案")
     async def profile(self, ctx: discord.ApplicationContext):
-        user = await get_citizen(ctx.author.id)
-        if not user:
+        summary = await get_citizen_profile_summary(ctx.author.id)
+        if not summary:
             await ctx.respond("🚫 你还不是小镇居民！请先使用 `/市民 注册 [名字]` 登记。", ephemeral=True)
             return
-        
+
+        user = summary["citizen"]
         name = user[1]
         species = user[2]
         pattern = user[3]
         money = user[4]
         active_title = user[6] if len(user) > 6 and user[6] else "无名之辈"
         accessory = user[7] if len(user) > 7 and user[7] else ""
+        citizen_level = summary["level"]
+        level_score = summary["level_score"]
+        progress_in_level = summary["progress_in_level"]
+        progress_needed = summary["progress_needed"]
+        next_threshold = summary["next_threshold"]
+        progress_bar = build_progress_bar(progress_in_level, progress_needed)
+        net_worth = summary["net_worth"]
+        stock_value = summary["stock_value"]
+        loan_amount = summary["loan_amount"]
+        property_count = summary["property_count"]
+        property_levels = summary["property_levels"]
+        farm_plot_count = summary["farm_plot_count"]
+        active_crop_count = summary["active_crop_count"]
+        title_count = summary["title_count"]
+        signin_count = summary["signin_count"]
+        stock_share_count = summary["stock_share_count"]
 
-        embed = discord.Embed(title=f"🆔 市民档案: {name}", color=0xFFD700)
+        embed = discord.Embed(title="🪪 喵喵镇民档案", color=pick_profile_color(citizen_level))
         embed.set_thumbnail(url=ctx.author.display_avatar.url)
-        
+        embed.set_author(name=f"{ctx.author.display_name} 的市民面板", icon_url=ctx.author.display_avatar.url)
+
         full_name_display = f"**【{active_title}】** {name} {accessory}"
-        
-        embed.add_field(name="📋 身份", value=full_name_display, inline=False)
-        embed.add_field(name="👤 品种特征", value=f"【{pattern}】{species}", inline=True)
-        
-        # --- 修改位置在这里 ---
-        # 使用 :.2f 将数字格式化为两位小数
-        embed.add_field(name="💰 资产账户", value=f"**{money:.2f}** 喵币", inline=True)
-        embed.add_field(name="🎮 功能入口", value="下方按钮已集成股市、农场、大富翁、排行榜、商店、背包、称号与魔法屋。", inline=False)
-        
+        embed.description = (
+            f"{full_name_display}\n"
+            f"**Lv.{citizen_level}** 资深镇民  |  品种：**{pattern}{species}**\n"
+            f"`{progress_bar}` **{progress_in_level}/{progress_needed}**\n"
+            f"当前成长值：**{level_score}**  |  下一级门槛：**{next_threshold}**"
+        )
+
+        embed.add_field(
+            name="💰 资产概览",
+            value=(
+                f"现金：**{format_large_number(money)}** 喵币\n"
+                f"股票市值：**{format_large_number(stock_value)}**\n"
+                f"净资产：**{format_large_number(net_worth)}**"
+            ),
+            inline=True,
+        )
+        embed.add_field(
+            name="🏘️ 经营概览",
+            value=(
+                f"地产：**{property_count}** 块\n"
+                f"地产总等级：**{property_levels}**\n"
+                f"农田：**{farm_plot_count}** 块"
+            ),
+            inline=True,
+        )
+        embed.add_field(
+            name="📦 收集概览",
+            value=(
+                f"股票持仓：**{stock_share_count}** 股\n"
+                f"称号收藏：**{title_count}** 个\n"
+                f"累计签到：**{signin_count}** 天"
+            ),
+            inline=True,
+        )
+        embed.add_field(
+            name="🌱 当前状态",
+            value=(
+                f"种植中的作物：**{active_crop_count}** 块地\n"
+                f"当前负债：**{format_large_number(loan_amount)}** 喵币\n"
+                f"佩戴饰品：**{accessory or '暂无'}**"
+            ),
+            inline=False,
+        )
+        embed.set_footer(text="下方按钮可继续进入股市、农场、大富翁、背包、商店、称号与魔法屋")
+
         await ctx.respond(embed=embed, view=ProfileView(ctx.author.id))
 
     @citizen.command(name="公告配置", description="【仅限管理员】打开补偿公告配置面板")

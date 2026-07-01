@@ -77,6 +77,8 @@ class UserRepositoryTests(RepositoryIntegrationTestCase):
         self.assertAlmostEqual(citizen[4], 1750.5)
         self.assertEqual(citizen[5], "busy")
         self.assertEqual(citizen[7], "🎀")
+        self.assertGreaterEqual(citizen[8], 1)
+        self.assertGreaterEqual(citizen[9], 0)
         self.assertEqual(await user_repo.get_equipped_accessory(1001), "🎀")
         self.assertAlmostEqual(await user_repo.get_user_money(1001), 1750.5)
 
@@ -85,6 +87,29 @@ class UserRepositoryTests(RepositoryIntegrationTestCase):
         await self.create_user(1003, name="B")
 
         self.assertEqual(await user_repo.list_registered_user_ids(), [1002, 1003])
+
+    async def test_user_repo_syncs_level_and_profile_summary(self):
+        await self.create_user(1004, money=12000, name="Leveler")
+        await stock_repo.initialize_stocks({"FISH": {"base_price": 20}})
+        await stock_repo.buy_stock(1004, "FISH", 50, 20)
+        await farm_repo.get_farm_state(1004)
+        await farm_repo.plant_seed(1004, 0, "corn", 1000)
+        await title_repo.unlock_title(1004, "hero")
+        await daily_repo.record_daily_signin(1004, "2026-07-01", 6666)
+        await monopoly_repo.ensure_player(1004)
+        success, _ = await monopoly_repo.buy_property(1004, 15, 3000)
+        self.assertTrue(success)
+
+        summary = await user_repo.get_citizen_profile_summary(1004)
+        self.assertIsNotNone(summary)
+        self.assertGreater(summary["level"], 1)
+        self.assertGreater(summary["level_score"], 0)
+        self.assertEqual(summary["property_count"], 1)
+        self.assertEqual(summary["farm_plot_count"], 4)
+        self.assertEqual(summary["active_crop_count"], 1)
+        self.assertEqual(summary["title_count"], 1)
+        self.assertEqual(summary["signin_count"], 1)
+        self.assertEqual(summary["stock_share_count"], 50)
 
 
 class FarmRepositoryTests(RepositoryIntegrationTestCase):

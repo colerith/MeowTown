@@ -21,7 +21,9 @@ async def setup_db():
 				money INTEGER DEFAULT 1000,
 				status TEXT DEFAULT 'normal',
 				active_title TEXT,
-				cat_accessory TEXT
+				cat_accessory TEXT,
+				citizen_level INTEGER DEFAULT 1,
+				level_score INTEGER DEFAULT 0
 			)
 			"""
 		)
@@ -154,6 +156,14 @@ async def setup_db():
 			pass
 		try:
 			await db.execute("ALTER TABLE users ADD COLUMN status TEXT DEFAULT 'normal'")
+		except Exception:
+			pass
+		try:
+			await db.execute("ALTER TABLE users ADD COLUMN citizen_level INTEGER DEFAULT 1")
+		except Exception:
+			pass
+		try:
+			await db.execute("ALTER TABLE users ADD COLUMN level_score INTEGER DEFAULT 0")
 		except Exception:
 			pass
 		try:
