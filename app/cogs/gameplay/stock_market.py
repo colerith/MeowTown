@@ -38,6 +38,7 @@ COMPENSATION_SHARES_PER_STOCK = 100
 IMG_STOCK = "https://i.postimg.cc/gcSBzV0j/stock-market.png"
 STOCK_NEWS_TITLE = "📈 喵尔街快讯"
 STOCK_NEWS_PANEL_ID = "stock_news_panel_v1"
+STOCK_NEWS_PANEL_MARKER = "\u2063\u2063\u2064stock_news_panel_v1\u2064\u2063\u2063"
 
 
 def get_guide_embed():
@@ -101,11 +102,14 @@ def is_stock_news_message(message: discord.Message):
     if message.author.bot is False or not message.embeds:
         return False
     embed = message.embeds[0]
-    return embed.title == STOCK_NEWS_TITLE and (embed.url or "").endswith(STOCK_NEWS_PANEL_ID)
+    return embed.title == STOCK_NEWS_TITLE and (
+        message.content == STOCK_NEWS_PANEL_MARKER
+        or (embed.url or "").endswith(STOCK_NEWS_PANEL_ID)
+    )
 
 
 async def build_stock_news_embed():
-    news_embed = discord.Embed(title=STOCK_NEWS_TITLE, color=0x3498DB, url=f"https://panel.local/{STOCK_NEWS_PANEL_ID}")
+    news_embed = discord.Embed(title=STOCK_NEWS_TITLE, color=0x3498DB)
     for stock_id, data in STOCKS.items():
         current_price = await get_stock_price(stock_id) or data["base_price"]
         news, score = generate_dynamic_news(stock_id, current_price=current_price)
@@ -127,7 +131,7 @@ async def build_stock_news_embed():
         )
 
     now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    news_embed.set_footer(text=f"最后刷新: {now_str} | 20分钟更新一次 | 面板ID:{STOCK_NEWS_PANEL_ID}")
+    news_embed.set_footer(text=f"最后刷新: {now_str} | 20分钟更新一次")
     return news_embed, now_str
 
 
@@ -585,10 +589,8 @@ class StockMarket(commands.Cog):
                 news_embed = discord.Embed(
                     title=STOCK_NEWS_TITLE,
                     color=0x3498DB,
-                    url=f"https://panel.local/{STOCK_NEWS_PANEL_ID}",
                 )
                 news_embed.description = "股市面板刷新时出现异常，请等待下一轮自动更新。"
-                news_embed.set_footer(text=f"面板ID:{STOCK_NEWS_PANEL_ID}")
                 await self.ensure_news_panel_stack_bottom(channel=channel, embed=news_embed)
 
     @market_update.before_loop
@@ -600,7 +602,6 @@ class StockMarket(commands.Cog):
         await asyncio.sleep(3)
         try:
             await self.initialize_stocks()
-            await self.publish_market_update()
         except Exception:
             pass
 
@@ -655,7 +656,7 @@ class StockMarket(commands.Cog):
             )
 
             if should_recreate:
-                ordered_panel = await channel.send(embed=embed)
+                ordered_panel = await channel.send(content=STOCK_NEWS_PANEL_MARKER, embed=embed)
 
             for message in panel_messages:
                 if ordered_panel is not None and message.id != ordered_panel.id:
@@ -676,7 +677,7 @@ class StockMarket(commands.Cog):
 
             embed, _now_str = await build_stock_news_embed()
             panel_messages = await self.find_stock_panel_messages(channel)
-            ordered_panel = await channel.send(embed=embed)
+            ordered_panel = await channel.send(content=STOCK_NEWS_PANEL_MARKER, embed=embed)
 
             for message in panel_messages:
                 try:

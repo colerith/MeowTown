@@ -26,6 +26,7 @@ SIGNIN_CHANNEL_ID = 1443488941045977140
 CHECKIN_TITLE = "🌞 喵喵镇民每日签到"
 BEIJING_TZ = ZoneInfo("Asia/Shanghai")
 SIGNIN_PANEL_ID = "daily_signin_panel_v1"
+SIGNIN_PANEL_MARKER = "\u2063\u2063\u2064signin_panel_v1\u2064\u2063\u2063"
 SIGNIN_REWARD_TIERS = [
     {
         "key": "common",
@@ -112,7 +113,7 @@ async def build_checkin_embed():
     today_count = await count_daily_signins_by_date(today)
     now_text = get_beijing_now().strftime("%Y-%m-%d %H:%M:%S")
 
-    embed = discord.Embed(title=CHECKIN_TITLE, color=0xF1C40F, url=f"https://panel.local/{SIGNIN_PANEL_ID}")
+    embed = discord.Embed(title=CHECKIN_TITLE, color=0xF1C40F)
     embed.description = (
         "欢迎来到镇民签到站。\n"
         "已注册喵喵每天都可以来签到一次，按 **北京时间** 结算。"
@@ -129,7 +130,7 @@ async def build_checkin_embed():
     )
     embed.add_field(name="今日签到人数", value=f"**{today_count}** 位镇民", inline=True)
     embed.add_field(name="当前日期", value=f"**{today}**", inline=True)
-    embed.set_footer(text=f"最后刷新: {now_text} | 每日 0 点后可再次签到（北京时间） | 面板ID:{SIGNIN_PANEL_ID}")
+    embed.set_footer(text=f"最后刷新: {now_text} | 每日 0 点后可再次签到（北京时间）")
     return embed
 
 
@@ -137,7 +138,10 @@ def is_signin_panel_message(message: discord.Message):
     if message.author.bot is False or not message.embeds:
         return False
     embed = message.embeds[0]
-    return embed.title == CHECKIN_TITLE and (embed.url or "").endswith(SIGNIN_PANEL_ID)
+    return embed.title == CHECKIN_TITLE and (
+        message.content == SIGNIN_PANEL_MARKER
+        or (embed.url or "").endswith(SIGNIN_PANEL_ID)
+    )
 
 
 async def apply_bonus_event(user_id):
@@ -327,7 +331,11 @@ class DailySignin(commands.Cog):
             )
             new_panel_message = newest_panel
             if need_new_panel:
-                new_panel_message = await channel.send(embed=await build_checkin_embed(), view=self.panel_view)
+                new_panel_message = await channel.send(
+                    content=SIGNIN_PANEL_MARKER,
+                    embed=await build_checkin_embed(),
+                    view=self.panel_view,
+                )
 
             for message in panel_messages:
                 if new_panel_message and message.id != new_panel_message.id:
@@ -351,7 +359,11 @@ class DailySignin(commands.Cog):
                 return None
 
             panel_messages = await self.find_panel_messages(channel)
-            new_panel_message = await channel.send(embed=await build_checkin_embed(), view=self.panel_view)
+            new_panel_message = await channel.send(
+                content=SIGNIN_PANEL_MARKER,
+                embed=await build_checkin_embed(),
+                view=self.panel_view,
+            )
 
             for message in panel_messages:
                 try:
