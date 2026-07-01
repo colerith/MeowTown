@@ -16,6 +16,7 @@ from app.shared.data.cat_data import generate_cat_identity
 
 REGISTERED_ROLE_ID = 1521848592476668005
 MAGIC_REROLL_COST = 2000
+TOWN_GROUP = discord.SlashCommandGroup("喵喵小镇", "喵喵小镇市民系统")
 
 
 def build_progress_bar(current_value, total_value, length=10):
@@ -159,7 +160,7 @@ class Cat(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    citizen = discord.SlashCommandGroup("喵喵小镇", "喵喵小镇市民系统")
+    citizen = TOWN_GROUP
 
     @citizen.command(name="注册", description="登记身份，入住喵喵小镇！(仅限初次)")
     async def register(self, ctx: discord.ApplicationContext, 
