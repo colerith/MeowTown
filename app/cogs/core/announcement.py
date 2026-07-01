@@ -118,25 +118,20 @@ class Announcement(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @TOWN_GROUP.command(name="发布公告", description="【仅限管理员】发布一条可继续编辑的公告")
-    @commands.is_owner()
-    async def publish_announcement(
+    async def open_announcement_editor(
         self,
         ctx: discord.ApplicationContext,
-        是否艾特: discord.Option(bool, "是否在公告中附带艾特内容", default=False),
-        艾特内容: discord.Option(str, "自定义艾特内容，可留空", required=False, default=""),
-        目标频道: discord.Option(discord.TextChannel, "要发送到的频道，默认当前频道", required=False, default=None),
+        mention_enabled: bool,
+        mention_content: str,
+        target_channel: discord.abc.Messageable | None,
     ):
-        await ctx.defer(ephemeral=True)
-
-        target_channel = 目标频道 or ctx.channel
         if target_channel is None:
             return await ctx.followup.send("🚫 未找到可发送公告的目标频道。", ephemeral=True)
 
         title = DEFAULT_ANNOUNCEMENT_TITLE
         body = DEFAULT_ANNOUNCEMENT_BODY
-        mention_content = (艾特内容 or "@everyone").strip()
-        content = mention_content if 是否艾特 else None
+        final_mention_content = (mention_content or "@everyone").strip()
+        content = final_mention_content if mention_enabled else None
 
         target_message = await target_channel.send(
             content=content,
@@ -148,14 +143,31 @@ class Announcement(commands.Cog):
             target_message=target_message,
             title=title,
             body=body,
-            mention_enabled=是否艾特,
-            mention_content=mention_content,
+            mention_enabled=mention_enabled,
+            mention_content=final_mention_content,
         )
         await ctx.followup.send(
             f"✅ 公告已发送到 {target_channel.mention}。\n现在可以继续在下方面板里编辑标题、内容和艾特设置。",
             embed=view.build_panel_embed(),
             view=view,
             ephemeral=True,
+        )
+
+    @TOWN_GROUP.command(name="发布公告", description="【仅限管理员】发布一条可继续编辑的公告")
+    @commands.is_owner()
+    async def publish_announcement(
+        self,
+        ctx: discord.ApplicationContext,
+        是否艾特: discord.Option(bool, "是否在公告中附带艾特内容", default=False),
+        艾特内容: discord.Option(str, "自定义艾特内容，可留空", required=False, default=""),
+        目标频道: discord.Option(discord.TextChannel, "要发送到的频道，默认当前频道", required=False, default=None),
+    ):
+        await ctx.defer(ephemeral=True)
+        await self.open_announcement_editor(
+            ctx=ctx,
+            mention_enabled=是否艾特,
+            mention_content=艾特内容,
+            target_channel=目标频道 or ctx.channel,
         )
 
 

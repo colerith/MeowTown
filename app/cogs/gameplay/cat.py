@@ -47,6 +47,32 @@ def pick_profile_color(level):
     return 0x2ECC71
 
 
+def get_citizen_rank(level):
+    if level >= 900:
+        return "传说镇守"
+    if level >= 700:
+        return "神话镇民"
+    if level >= 500:
+        return "王国栋梁"
+    if level >= 300:
+        return "首席镇务官"
+    if level >= 200:
+        return "荣耀富豪"
+    if level >= 120:
+        return "王牌经营家"
+    if level >= 80:
+        return "明星镇民"
+    if level >= 50:
+        return "资深镇民"
+    if level >= 30:
+        return "熟练居民"
+    if level >= 15:
+        return "活跃住户"
+    if level >= 5:
+        return "新晋镇民"
+    return "见习住户"
+
+
 async def perform_magic_reroll(user_id: int):
     user = await get_citizen(user_id)
     if not user:
@@ -220,6 +246,7 @@ class Cat(commands.Cog):
         title_count = summary["title_count"]
         signin_count = summary["signin_count"]
         stock_share_count = summary["stock_share_count"]
+        citizen_rank = get_citizen_rank(citizen_level)
 
         embed = discord.Embed(title="🪪 喵喵镇民档案", color=pick_profile_color(citizen_level))
         embed.set_thumbnail(url=ctx.author.display_avatar.url)
@@ -228,7 +255,7 @@ class Cat(commands.Cog):
         full_name_display = f"**【{active_title}】** {name} {accessory}"
         embed.description = (
             f"{full_name_display}\n"
-            f"**Lv.{citizen_level}** 资深镇民  |  品种：**{pattern}{species}**\n"
+            f"**Lv.{citizen_level}** {citizen_rank}  |  品种：**{pattern}{species}**\n"
             f"`{progress_bar}` **{progress_in_level}/{progress_needed}**\n"
             f"当前成长值：**{level_score}**  |  下一级门槛：**{next_threshold}**"
         )
@@ -273,7 +300,7 @@ class Cat(commands.Cog):
 
         await ctx.respond(embed=embed, view=ProfileView(ctx.author.id))
 
-    @citizen.command(name="公告配置", description="【仅限管理员】打开补偿公告配置面板")
+    @citizen.command(name="补偿公告配置", description="【仅限管理员】打开股票补偿公告配置面板")
     @commands.is_owner()
     async def compensation_config(self, ctx: discord.ApplicationContext):
         await ctx.defer(ephemeral=True)
