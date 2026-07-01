@@ -13,4 +13,6 @@ def setup_logging() -> logging.Logger:
 
 
 def create_bot(owner_ids: list[int]) -> discord.Bot:
-    return discord.Bot(owner_ids=owner_ids)
+    intents = discord.Intents.default()
+    intents.members = True
+    return discord.Bot(owner_ids=owner_ids, intents=intents)

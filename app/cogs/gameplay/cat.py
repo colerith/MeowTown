@@ -1,46 +1,20 @@
 # cogs/cat.py
 import discord
 from discord.ext import commands
-from discord.ui import View, Select, Button
-from app.db.repositories.inventory_repo import add_item, get_items
-from app.db.repositories.title_repo import get_user_titles
+from app.cogs.gameplay.stock_market import (
+    CompensationConfigView,
+    open_compensation_config_panel,
+    create_stock_market_dashboard,
+)
+from app.cogs.gameplay.farm import create_farm_dashboard
+from app.cogs.gameplay.monopoly import create_monopoly_dashboard
+from app.cogs.gameplay.ranking import create_ranking_dashboard
+from app.cogs.gameplay.shop import open_bag_panel, open_shop_panel
+from app.cogs.gameplay.title import open_title_panel
 from app.db.repositories.user_repo import create_citizen, get_citizen, update_citizen_look, update_money
 from app.shared.data.cat_data import generate_cat_identity
-from app.shared.data.title_data import TITLES
-from app.shared.data.shop_data import SHOP_ITEMS 
 
-# --- 迷你商店组件 ---
-class MiniShopSelect(Select):
-    def __init__(self):
-        options = []
-        for name, data in list(SHOP_ITEMS.items())[:25]:
-            options.append(discord.SelectOption(
-                label=name,
-                description=f"💰{data['price']} | {data['desc'][:30]}",
-                emoji=data['icon'],
-                value=name
-            ))
-        super().__init__(placeholder="选择要购买的物品...", min_values=1, max_values=1, options=options)
-
-    async def callback(self, interaction: discord.Interaction):
-        item_name = self.values[0]
-        item = SHOP_ITEMS[item_name]
-        user_id = interaction.user.id
-        
-        user = await get_citizen(user_id)
-        # 这里的 user[4] 可能是浮点数
-        if user[4] < item['price']:
-            return await interaction.response.send_message(f"🚫 余额不足！需要 **{item['price']}** 喵币。", ephemeral=True)
-            
-        await update_money(user_id, -item['price'])
-        await add_item(user_id, item_name, 1)
-        
-        await interaction.response.send_message(f"✅ 成功购买 **{item['icon']} {item_name}**！\n(花费 {item['price']} 喵币)", ephemeral=True)
-
-class MiniShopView(View):
-    def __init__(self):
-        super().__init__(timeout=60)
-        self.add_item(MiniShopSelect())
+REGISTERED_ROLE_ID = 1521848592476668005
 
 # --- 档案主视图 ---
 class ProfileView(discord.ui.View):
@@ -48,58 +22,63 @@ class ProfileView(discord.ui.View):
         super().__init__(timeout=None)
         self.user_id = user_id
 
+    def _is_owner(self, interaction: discord.Interaction):
+        owner_ids = getattr(interaction.client, "owner_ids", None) or []
+        return interaction.user.id in owner_ids
+
     @discord.ui.button(label="👑 称号", style=discord.ButtonStyle.primary, emoji="🏷️", row=0)
     async def title_callback(self, button, interaction):
         if interaction.user.id != self.user_id:
             return await interaction.response.send_message("这不是你的档案哦！", ephemeral=True)
-
-        owned_ids = await get_user_titles(self.user_id)
-        if not owned_ids:
-            return await interaction.response.send_message("你还没有称号！去抽奖吧。", ephemeral=True)
-
-        user = await get_citizen(self.user_id)
-        active_title = user[6] if user and len(user) > 6 else None
-
-        embed = discord.Embed(title="🏷️ 我的称号", color=discord.Color.gold())
-        desc = ""
-        # 简单的排序逻辑，如果没有 rarity 可能会报错，建议加个 .get
-        sorted_ids = sorted(owned_ids, key=lambda x: ["SSR", "SR", "R", "N"].index(TITLES.get(x, {}).get('rarity', 'N')))
-        for tid in sorted_ids:
-            data = TITLES.get(tid)
-            if not data: continue
-            line = f"**【{data['name']}】**"
-            if active_title == data['name']: line += " ✅"
-            desc += line + "\n"
-        embed.description = desc
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        await open_title_panel(interaction, self.user_id)
 
     @discord.ui.button(label="🎒 背包", style=discord.ButtonStyle.success, emoji="🎒", row=0)
     async def bag_callback(self, button, interaction):
-        if interaction.user.id != self.user_id: return
-
-        items = await get_items(self.user_id)
-        if not items:
-            return await interaction.response.send_message("背包空空如也。", ephemeral=True)
-
-        embed = discord.Embed(title="🎒 背包", color=0x3498db)
-        content = ""
-        for name, count in items:
-            icon = SHOP_ITEMS.get(name, {}).get('icon', "📦")
-            content += f"**{icon} {name}** x{count}\n"
-        embed.description = content
-        
-        user = await get_citizen(self.user_id)
-        acc = user[7] if user and len(user) > 7 else None
-        if acc: embed.add_field(name="👕 穿戴中", value=acc)
-            
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        if interaction.user.id != self.user_id:
+            return await interaction.response.send_message("这不是你的档案哦！", ephemeral=True)
+        await open_bag_panel(interaction, self.user_id)
 
     @discord.ui.button(label="商店", style=discord.ButtonStyle.secondary, emoji="🛍️", row=0)
     async def shop_callback(self, button, interaction):
-        if interaction.user.id != self.user_id: return
-        
-        embed = discord.Embed(title="🏪 快捷商店", description="请选择你要购买的物品：", color=0xFF69B4)
-        await interaction.response.send_message(embed=embed, view=MiniShopView(), ephemeral=True)
+        if interaction.user.id != self.user_id:
+            return await interaction.response.send_message("这不是你的档案哦！", ephemeral=True)
+        await open_shop_panel(interaction, self.user_id)
+
+    @discord.ui.button(label="股市", style=discord.ButtonStyle.primary, emoji="📈", row=1)
+    async def stock_callback(self, button, interaction):
+        if interaction.user.id != self.user_id:
+            return await interaction.response.send_message("这不是你的档案哦！", ephemeral=True)
+        embed, view = await create_stock_market_dashboard()
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
+    @discord.ui.button(label="农场", style=discord.ButtonStyle.success, emoji="🌾", row=1)
+    async def farm_callback(self, button, interaction):
+        if interaction.user.id != self.user_id:
+            return await interaction.response.send_message("这不是你的档案哦！", ephemeral=True)
+        embed, view = await create_farm_dashboard(interaction.user)
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
+    @discord.ui.button(label="大富翁", style=discord.ButtonStyle.primary, emoji="🎲", row=1)
+    async def monopoly_callback(self, button, interaction):
+        if interaction.user.id != self.user_id:
+            return await interaction.response.send_message("这不是你的档案哦！", ephemeral=True)
+        embed, view = await create_monopoly_dashboard(interaction.user)
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
+    @discord.ui.button(label="排行榜", style=discord.ButtonStyle.secondary, emoji="🏆", row=1)
+    async def ranking_callback(self, button, interaction):
+        if interaction.user.id != self.user_id:
+            return await interaction.response.send_message("这不是你的档案哦！", ephemeral=True)
+        embed, view = await create_ranking_dashboard()
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
+    @discord.ui.button(label="补偿公告", style=discord.ButtonStyle.danger, emoji="📣", row=2)
+    async def compensation_callback(self, button, interaction):
+        if interaction.user.id != self.user_id:
+            return await interaction.response.send_message("这不是你的档案哦！", ephemeral=True)
+        if not self._is_owner(interaction):
+            return await interaction.response.send_message("🚫 只有管理员可以打开补偿公告配置面板。", ephemeral=True)
+        await open_compensation_config_panel(interaction)
 
 class Cat(commands.Cog):
     def __init__(self, bot):
@@ -133,6 +112,14 @@ class Cat(commands.Cog):
         embed.set_footer(text="如果不满意长相，可以去神秘魔法屋找巫师整容哦~")
         await ctx.respond(embed=embed)
 
+        if ctx.guild:
+            role = ctx.guild.get_role(REGISTERED_ROLE_ID)
+            if role:
+                try:
+                    await ctx.author.add_roles(role, reason="新注册喵喵自动发放身份组")
+                except discord.HTTPException:
+                    pass
+
     @citizen.command(name="档案", description="查看我的市民档案")
     async def profile(self, ctx: discord.ApplicationContext):
         user = await get_citizen(ctx.author.id)
@@ -158,8 +145,50 @@ class Cat(commands.Cog):
         # --- 修改位置在这里 ---
         # 使用 :.2f 将数字格式化为两位小数
         embed.add_field(name="💰 资产账户", value=f"**{money:.2f}** 喵币", inline=True)
+        embed.add_field(name="🎮 功能入口", value="下方按钮已集成股市、农场、大富翁、排行榜、商店、背包与称号。", inline=False)
         
         await ctx.respond(embed=embed, view=ProfileView(ctx.author.id))
+
+    @citizen.command(name="公告配置", description="【仅限管理员】打开补偿公告配置面板")
+    @commands.is_owner()
+    async def compensation_config(self, ctx: discord.ApplicationContext):
+        await ctx.defer(ephemeral=True)
+        view = CompensationConfigView()
+        await ctx.followup.send(embed=view.build_preview_embed(), view=view, ephemeral=True)
+
+    @citizen.command(name="重置股市", description="【仅限管理员】将股票价格重置到基准值")
+    @commands.is_owner()
+    async def reset_stock_market(self, ctx: discord.ApplicationContext):
+        await ctx.defer(ephemeral=True)
+        stock_cog = self.bot.get_cog("StockMarket")
+        if stock_cog is None:
+            return await ctx.followup.send("🚫 股市模块未加载。", ephemeral=True)
+
+        await stock_cog.reset_market_data()
+        embed, _view = await create_stock_market_dashboard()
+        await ctx.followup.send("✅ 股票价格已重置为基准值。", embed=embed, ephemeral=True)
+
+    @citizen.command(name="补发镇民组", description="【仅限管理员】为所有已注册喵喵补发镇民身份组")
+    @commands.is_owner()
+    async def backfill_registered_role(self, ctx: discord.ApplicationContext):
+        await ctx.defer(ephemeral=True)
+        if ctx.guild is None:
+            return await ctx.followup.send("🚫 该指令只能在服务器内使用。", ephemeral=True)
+
+        stock_cog = self.bot.get_cog("StockMarket")
+        if stock_cog is None:
+            return await ctx.followup.send("🚫 股市模块未加载。", ephemeral=True)
+
+        result = await stock_cog.backfill_registered_role(ctx.guild)
+        if result["role_missing"]:
+            return await ctx.followup.send("🚫 未找到目标身份组。", ephemeral=True)
+
+        await ctx.followup.send(
+            f"✅ 身份组补发完成。\n新增: **{result['granted']}**\n"
+            f"已拥有: **{result['skipped_existing']}**\n"
+            f"不在服务器: **{result['skipped_missing']}**\n失败: **{result['failed']}**",
+            ephemeral=True,
+        )
 
     # --- 魔法屋功能 ---
     magic = discord.SlashCommandGroup("魔法屋", "神秘魔法屋")

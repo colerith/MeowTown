@@ -19,7 +19,7 @@ class ProfileContainerView(ui.LayoutView):
 		self.btn_inventory = ui.Button(label="我的背包", style=discord.ButtonStyle.green, emoji="🎒")
 		self.btn_inventory.callback = self.inventory_callback
 
-		self.btn_quick_shop = ui.Button(label="快捷商店", style=discord.ButtonStyle.secondary, emoji="🛍️")
+		self.btn_quick_shop = ui.Button(label="主商店", style=discord.ButtonStyle.secondary, emoji="🛍️")
 
 		name, species, pattern, money, _, active_title, *_ = self.citizen_data
 

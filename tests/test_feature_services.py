@@ -4,6 +4,7 @@ from unittest.mock import patch
 from app.features.monopoly import service as monopoly_service
 from app.features.profile import service as profile_service
 from app.features.stock_market import service as stock_service
+from app.shared.data import stock_data
 
 
 class ProfileServiceTests(unittest.TestCase):
@@ -94,3 +95,14 @@ class StockMarketServiceTests(unittest.TestCase):
 
         self.assertEqual(total_assets, 380)
         self.assertTrue(content.endswith("无"))
+
+    def test_calculate_next_price_caps_bubble_stock(self):
+        new_price, change_pct = stock_data.calculate_next_price("TOY", 10**18, 3)
+
+        self.assertEqual(new_price, stock_data.STOCKS["TOY"]["max_price"])
+        self.assertLess(change_pct, 0)
+
+    def test_calculate_next_price_honors_price_floor(self):
+        new_price, _change_pct = stock_data.calculate_next_price("BOX", 0.01, -3)
+
+        self.assertEqual(new_price, stock_data.STOCKS["BOX"]["min_price"])

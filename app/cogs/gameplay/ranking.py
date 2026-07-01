@@ -46,17 +46,14 @@ class RankingView(View):
         super().__init__()
         self.add_item(RankSelect())
 
+async def create_ranking_dashboard():
+    view = RankingView()
+    embed = await view.children[0].generate_rank_embed("money")
+    return embed, view
+
 class Ranking(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-
-    @discord.slash_command(name="排行榜", description="查看小镇名人堂")
-    async def leaderboard(self, ctx: discord.ApplicationContext):
-        # 默认显示富豪榜
-        view = RankingView()
-        # 手动调用一次生成逻辑获取初始 Embed
-        embed = await view.children[0].generate_rank_embed("money")
-        await ctx.respond(embed=embed, view=view)
 
 def setup(bot):
     bot.add_cog(Ranking(bot))

@@ -1,3 +1,5 @@
+import datetime
+
 import aiosqlite
 
 from app.db.engine import DB_PATH
@@ -134,16 +136,96 @@ async def update_stock_quote(stock_id, new_price, price_diff):
         await db.commit()
 
 
+async def reset_stock_market(stock_config):
+    async with aiosqlite.connect(DB_PATH) as db:
+        for stock_id, data in stock_config.items():
+            await db.execute(
+                """
+                INSERT INTO stocks (stock_id, current_price, last_change)
+                VALUES (?, ?, 0)
+                ON CONFLICT(stock_id) DO UPDATE SET
+                    current_price = excluded.current_price,
+                    last_change = 0
+                """,
+                (stock_id, data["base_price"]),
+            )
+        await db.commit()
+
+
+async def grant_stock_shares(user_id, stock_id, quantity):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            """
+            INSERT INTO portfolios (user_id, stock_id, quantity) VALUES (?, ?, ?)
+            ON CONFLICT(user_id, stock_id) DO UPDATE SET quantity = quantity + excluded.quantity
+            """,
+            (user_id, stock_id, quantity),
+        )
+        await db.commit()
+
+
+async def has_claimed_stock_compensation(user_id):
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "SELECT 1 FROM stock_compensation_claims WHERE user_id = ?",
+            (user_id,),
+        )
+        return await cursor.fetchone() is not None
+
+
+async def claim_stock_compensation(user_id, stock_ids, quantity_per_stock):
+    claimed_at = datetime.datetime.utcnow().isoformat(timespec="seconds")
+    serialized_stock_ids = ",".join(stock_ids)
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        try:
+            await db.execute("BEGIN")
+            cursor = await db.execute(
+                "SELECT 1 FROM stock_compensation_claims WHERE user_id = ?",
+                (user_id,),
+            )
+            if await cursor.fetchone():
+                await db.rollback()
+                return False
+
+            await db.execute(
+                """
+                INSERT INTO stock_compensation_claims (user_id, stock_ids, quantity_per_stock, claimed_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (user_id, serialized_stock_ids, quantity_per_stock, claimed_at),
+            )
+
+            for stock_id in stock_ids:
+                await db.execute(
+                    """
+                    INSERT INTO portfolios (user_id, stock_id, quantity) VALUES (?, ?, ?)
+                    ON CONFLICT(user_id, stock_id) DO UPDATE SET quantity = quantity + excluded.quantity
+                    """,
+                    (user_id, stock_id, quantity_per_stock),
+                )
+
+            await db.commit()
+            return True
+        except Exception:
+            await db.rollback()
+            raise
+
+
 __all__ = [
     "borrow_money",
     "buy_stock",
+    "claim_stock_compensation",
+    "grant_stock_shares",
     "get_loan_amount",
     "get_portfolio_positions",
     "get_portfolio_with_prices",
     "get_stock_price",
+    "has_claimed_stock_compensation",
     "initialize_stocks",
     "list_market_stocks",
     "repay_loan",
+    "reset_stock_market",
     "sell_stock",
     "update_stock_quote",
 ]

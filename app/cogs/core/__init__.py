@@ -1,1 +1,0 @@
-"""Core cogs package."""

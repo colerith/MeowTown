@@ -78,6 +78,12 @@ class UserRepositoryTests(RepositoryIntegrationTestCase):
         self.assertEqual(await user_repo.get_equipped_accessory(1001), "🎀")
         self.assertAlmostEqual(await user_repo.get_user_money(1001), 1750.5)
 
+    async def test_user_repo_lists_registered_user_ids(self):
+        await self.create_user(1002, name="A")
+        await self.create_user(1003, name="B")
+
+        self.assertEqual(await user_repo.list_registered_user_ids(), [1002, 1003])
+
 
 class FarmRepositoryTests(RepositoryIntegrationTestCase):
     async def test_farm_repo_initializes_and_updates_plots(self):
@@ -164,6 +170,20 @@ class StockRepositoryTests(RepositoryIntegrationTestCase):
 
         portfolio = await stock_repo.get_portfolio_with_prices(2002)
         self.assertEqual(portfolio, [("TOY", 10, 18.0)])
+
+    async def test_stock_repo_can_reset_market_and_claim_compensation_once(self):
+        await self.create_user(2003, money=3000, name="Comp")
+        await stock_repo.initialize_stocks({"FISH": {"base_price": 50}, "BOX": {"base_price": 80}})
+        await stock_repo.update_stock_quote("FISH", 999, 949)
+
+        await stock_repo.reset_stock_market({"FISH": {"base_price": 50}, "BOX": {"base_price": 80}})
+        self.assertEqual(await stock_repo.list_market_stocks(), [("BOX", 80.0, 0.0), ("FISH", 50.0, 0.0)])
+
+        self.assertFalse(await stock_repo.has_claimed_stock_compensation(2003))
+        self.assertTrue(await stock_repo.claim_stock_compensation(2003, ["FISH", "BOX"], 100))
+        self.assertTrue(await stock_repo.has_claimed_stock_compensation(2003))
+        self.assertFalse(await stock_repo.claim_stock_compensation(2003, ["FISH", "BOX"], 100))
+        self.assertEqual(await stock_repo.get_portfolio_positions(2003), [("BOX", 100), ("FISH", 100)])
 
 
 class InventoryRepositoryTests(RepositoryIntegrationTestCase):

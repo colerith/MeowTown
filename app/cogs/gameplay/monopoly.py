@@ -401,21 +401,18 @@ class MonopolyDashboardView(View):
     async def _go_jail(self, user_id):
         await send_player_to_jail(user_id)
 
+
+async def create_monopoly_dashboard(user: discord.abc.User):
+    embed, player = await render_game_embed(user.id, user.display_name, user.display_avatar.url)
+    view = MonopolyDashboardView(user.id, user.display_name, user.display_avatar.url)
+    if len(player) > 1:
+        status = player[1]
+        view.children[5].disabled = (status != "in_jail")
+    return embed, view
+
 class Monopoly(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-
-    @discord.slash_command(name="大富翁面板", description="打开大富翁游戏控制台")
-    async def dashboard(self, ctx: discord.ApplicationContext):
-        embed, player = await render_game_embed(ctx.author.id, ctx.author.display_name, ctx.author.display_avatar.url)
-        view = MonopolyDashboardView(ctx.author.id, ctx.author.display_name, ctx.author.display_avatar.url)
-        
-        # 兼容性处理：如果 player 返回的元素少于 5 个，说明还没读到 luck
-        if len(player) > 1:
-            status = player[1]
-            view.children[5].disabled = (status != 'in_jail')
-        
-        await ctx.respond(embed=embed, view=view)
 
 def setup(bot):
     bot.add_cog(Monopoly(bot))

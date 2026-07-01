@@ -1,97 +1,147 @@
-# cogs/title.py
 import discord
 from discord.ext import commands
-from app.db.repositories.title_repo import check_title_owned, equip_user_title, get_user_titles, unlock_title
+from discord.ui import Button, Select, View
+
+from app.db.repositories.title_repo import (
+    check_title_owned,
+    equip_user_title,
+    get_user_titles,
+    unlock_title,
+)
 from app.db.repositories.user_repo import get_citizen, update_money
-from app.shared.data.title_data import TITLES, RARITY_CONFIG, TITLE_DRAW_COST, draw_random_title
+from app.shared.data.title_data import RARITY_CONFIG, TITLES, TITLE_DRAW_COST, draw_random_title
+
+TITLE_IMAGE = "https://i.postimg.cc/4dFbg1Qj/title.png"
+
+
+async def build_title_panel_embed(user_id):
+    owned_ids = await get_user_titles(user_id)
+    user = await get_citizen(user_id)
+    active_title = user[6] if user and len(user) > 6 and user[6] else None
+
+    embed = discord.Embed(title="🏷️ 喵喵称号中心", color=discord.Color.gold())
+    embed.set_image(url=TITLE_IMAGE)
+
+    if not owned_ids:
+        embed.description = f"你还没有称号。\n点击下方 `抽一发`，花费 **{TITLE_DRAW_COST}** 喵币试试手气。"
+        return embed
+
+    sorted_ids = sorted(
+        owned_ids,
+        key=lambda x: ["SSR", "SR", "R", "N"].index(TITLES.get(x, {}).get("rarity", "N")),
+    )
+    lines = []
+    for tid in sorted_ids:
+        data = TITLES.get(tid)
+        if not data:
+            continue
+        rarity_name = RARITY_CONFIG[data["rarity"]]["name"]
+        line = f"**【{data['name']}】** ({rarity_name})"
+        if active_title == data["name"]:
+            line += " ✅"
+        lines.append(line)
+
+    embed.description = "\n".join(lines)
+    embed.set_footer(text=f"当前共有 {len(lines)} 个称号 | 抽取花费 {TITLE_DRAW_COST} 喵币")
+    return embed
+
+
+class TitleEquipSelect(Select):
+    def __init__(self, user_id, owned_ids):
+        self.user_id = user_id
+        options = [
+            discord.SelectOption(
+                label=TITLES[tid]["name"],
+                description=f"稀有度 {RARITY_CONFIG[TITLES[tid]['rarity']]['name']}",
+                value=TITLES[tid]["name"],
+            )
+            for tid in owned_ids
+            if tid in TITLES
+        ]
+        super().__init__(placeholder="选择要佩戴的称号...", min_values=1, max_values=1, options=options[:25])
+
+    async def callback(self, interaction: discord.Interaction):
+        if interaction.user.id != self.user_id:
+            return await interaction.response.send_message("这不是你的称号面板。", ephemeral=True)
+
+        title_name = self.values[0]
+        await equip_user_title(self.user_id, title_name)
+        await interaction.response.send_message(f"✅ 你现在佩戴的是 **【{title_name}】**。", ephemeral=True)
+
+
+class TitlePanelView(View):
+    def __init__(self, user_id):
+        super().__init__(timeout=300)
+        self.user_id = user_id
+
+    @discord.ui.button(label="抽一发", style=discord.ButtonStyle.success, emoji="🎰", row=0)
+    async def draw_btn(self, button, interaction):
+        if interaction.user.id != self.user_id:
+            return await interaction.response.send_message("这不是你的称号面板。", ephemeral=True)
+
+        user = await get_citizen(self.user_id)
+        if user[4] < TITLE_DRAW_COST:
+            return await interaction.response.send_message(
+                f"🚫 你的喵币不足！抽一次需要 **{TITLE_DRAW_COST}** 喵币。",
+                ephemeral=True,
+            )
+
+        await update_money(self.user_id, -TITLE_DRAW_COST)
+        tid, title_data = draw_random_title()
+        rarity_info = RARITY_CONFIG[title_data["rarity"]]
+        is_owned = await check_title_owned(self.user_id, tid)
+
+        embed = discord.Embed(title="🎰 称号扭蛋机", color=rarity_info["color"])
+        embed.set_image(url=TITLE_IMAGE)
+
+        if is_owned:
+            refund = int(TITLE_DRAW_COST / 2)
+            await update_money(self.user_id, refund)
+            embed.description = (
+                f"你抽到了：**【{title_data['name']}】** ({rarity_info['name']})\n\n"
+                f"😕 已经拥有该称号，系统退还 **{refund}** 喵币。"
+            )
+        else:
+            await unlock_title(self.user_id, tid)
+            embed.description = (
+                f"🎉 **恭喜！你获得了一个新称号！**\n\n"
+                f"🏷️ **【{title_data['name']}】**\n"
+                f"✨ 稀有度：**{rarity_info['name']}**"
+            )
+
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @discord.ui.button(label="佩戴称号", style=discord.ButtonStyle.primary, emoji="👑", row=0)
+    async def equip_btn(self, button, interaction):
+        if interaction.user.id != self.user_id:
+            return await interaction.response.send_message("这不是你的称号面板。", ephemeral=True)
+
+        owned_ids = await get_user_titles(self.user_id)
+        if not owned_ids:
+            return await interaction.response.send_message("你还没有称号可佩戴。", ephemeral=True)
+
+        view = View(timeout=120)
+        view.add_item(TitleEquipSelect(self.user_id, owned_ids))
+        await interaction.response.send_message("请选择一个称号进行佩戴：", view=view, ephemeral=True)
+
+    @discord.ui.button(label="刷新列表", style=discord.ButtonStyle.secondary, emoji="🔄", row=0)
+    async def refresh_btn(self, button, interaction):
+        if interaction.user.id != self.user_id:
+            return await interaction.response.send_message("这不是你的称号面板。", ephemeral=True)
+
+        embed = await build_title_panel_embed(self.user_id)
+        await interaction.response.edit_message(embed=embed, view=self)
+
+
+async def open_title_panel(interaction: discord.Interaction, user_id: int):
+    embed = await build_title_panel_embed(user_id)
+    await interaction.response.send_message(embed=embed, view=TitlePanelView(user_id), ephemeral=True)
+
 
 class Title(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    title_group = discord.SlashCommandGroup("称号", "管理你的喵喵称号")
-
-    @title_group.command(name="抽奖", description=f"花费 {TITLE_DRAW_COST} 喵币抽取一个随机称号")
-    async def draw(self, ctx: discord.ApplicationContext):
-        # 1. 检查钱
-        user = await get_citizen(ctx.author.id)
-        if user[4] < TITLE_DRAW_COST:
-            await ctx.respond(f"🚫 你的喵币不足！抽一次需要 **{TITLE_DRAW_COST}** 喵币。", ephemeral=True)
-            return
-
-        # 2. 扣钱并抽奖
-        await update_money(ctx.author.id, -TITLE_DRAW_COST)
-        tid, title_data = draw_random_title()
-        rarity_info = RARITY_CONFIG[title_data['rarity']]
-        
-        # 3. 检查是否重复
-        is_owned = await check_title_owned(ctx.author.id, tid)
-        
-        embed = discord.Embed(title="🎰 称号扭蛋机", color=rarity_info['color'])
-        embed.set_image(url="https://i.postimg.cc/4dFbg1Qj/title.png")
-        
-        if is_owned:
-            refund = int(TITLE_DRAW_COST / 2)
-            await update_money(ctx.author.id, refund)
-            embed.description = f"你抽到了：**【{title_data['name']}】** ({rarity_info['name']})\n\n😕 哎呀，你已经有这个称号了！\n💰 系统退还了你 **{refund}** 喵币作为安慰。"
-        else:
-            await unlock_title(ctx.author.id, tid)
-            embed.description = f"🎉 **恭喜！你获得了一个新称号！**\n\n🏷️ **【{title_data['name']}】**\n✨ 稀有度：**{rarity_info['name']}**"
-            if title_data['rarity'] == 'SSR':
-                embed.description += "\n\n🚨 **传说降临！全服通告！**"
-        
-        await ctx.respond(embed=embed)
-
-    @title_group.command(name="列表", description="查看你拥有的所有称号")
-    async def list_titles(self, ctx: discord.ApplicationContext):
-        owned_ids = await get_user_titles(ctx.author.id)
-        if not owned_ids:
-            await ctx.respond("你还没有任何称号！快去 `/称号 抽奖` 试试手气吧。", ephemeral=True)
-            return
-
-        # 获取当前佩戴的称号
-        user = await get_citizen(ctx.author.id)
-
-        active_title = user[5] if len(user) > 5 else None 
-
-        embed = discord.Embed(title="🏷️ 我的称号背包", color=discord.Color.gold())
-        
-        # 按稀有度分类显示
-        description = ""
-        # 排序：SSR -> SR -> R -> N
-        sorted_ids = sorted(owned_ids, key=lambda x: ["SSR", "SR", "R", "N"].index(TITLES[x]['rarity']))
-
-        for tid in sorted_ids:
-            data = TITLES[tid]
-            r_name = RARITY_CONFIG[data['rarity']]['name']
-            
-            line = f"**【{data['name']}】** ({r_name})"
-            if active_title == data['name']:
-                line = f"✅ {line} (当前佩戴)"
-            
-            description += line + "\n"
-
-        embed.description = description
-        embed.set_footer(text="使用 /称号 佩戴 [名称] 来展示你的个性！")
-        await ctx.respond(embed=embed)
-
-    @title_group.command(name="佩戴", description="选择一个称号展示在档案上")
-    async def equip(self, ctx: discord.ApplicationContext, 称号名称: str):
-        # 1. 验证是否拥有
-        owned_ids = await get_user_titles(ctx.author.id)
-        target_tid = None
-        for tid in owned_ids:
-            if TITLES[tid]['name'] == 称号名称:
-                target_tid = tid
-                break
-        
-        if not target_tid:
-            await ctx.respond(f"🚫 你还没有获得 **【{称号名称}】** 这个称号哦！", ephemeral=True)
-            return
-
-        # 2. 佩戴
-        await equip_user_title(ctx.author.id, 称号名称)
-        await ctx.respond(f"✅ 设置成功！你现在的头衔是 **【{称号名称}】**。")
 
 def setup(bot):
     bot.add_cog(Title(bot))

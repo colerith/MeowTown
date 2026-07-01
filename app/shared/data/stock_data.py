@@ -3,11 +3,11 @@ import math
 
 # 股票定义（保持不变）
 STOCKS = {
-    "FISH": {"name": "咸鱼海运", "icon": "🐟", "base_price": 50, "volatility": 0.15},
-    "CATN": {"name": "猫薄荷生物", "icon": "🌿", "base_price": 200, "volatility": 0.40},
-    "TOY": {"name": "逗猫棒重工", "icon": "🎣", "base_price": 120, "volatility": 0.25},
-    "BOX": {"name": "纸箱地产", "icon": "📦", "base_price": 80, "volatility": 0.10},
-    "DOGE": {"name": "柴犬币", "icon": "🐕", "base_price": 10, "volatility": 0.90}
+    "FISH": {"name": "咸鱼海运", "icon": "🐟", "base_price": 50, "volatility": 0.15, "min_price": 10, "max_price": 250},
+    "CATN": {"name": "猫薄荷生物", "icon": "🌿", "base_price": 200, "volatility": 0.40, "min_price": 40, "max_price": 1200},
+    "TOY": {"name": "逗猫棒重工", "icon": "🎣", "base_price": 120, "volatility": 0.25, "min_price": 24, "max_price": 720},
+    "BOX": {"name": "纸箱地产", "icon": "📦", "base_price": 80, "volatility": 0.10, "min_price": 20, "max_price": 400},
+    "DOGE": {"name": "柴犬币", "icon": "🐕", "base_price": 10, "volatility": 0.90, "min_price": 0.5, "max_price": 500}
 }
 
 # --- 新闻组合部件 ---
@@ -165,6 +165,8 @@ def calculate_next_price(stock_id, current_price, news_score):
     stock_info = STOCKS[stock_id]
     base_price = stock_info["base_price"]
     volatility = stock_info["volatility"]
+    min_price = stock_info.get("min_price", 0.5)
+    max_price = stock_info.get("max_price", base_price * 10)
     
     # --- 机制A: 基础涨跌幅 ---
     # 分数每增加1分，理论波动 x%
@@ -180,15 +182,17 @@ def calculate_next_price(stock_id, current_price, news_score):
 
     # 1. 抑制暴涨 (当价格高于基准且利好时)
     if ratio > 1.2 and raw_change_pct > 0:
-        # 使用对数函数进行压缩：价格越高，分母越大，涨幅越小
-        # 例如 10倍价格时，涨幅会被除以 ~3.3
         damping = math.log(ratio) + 1
         final_change_pct = raw_change_pct / damping
-        
-    # 2. 抑制归零 (当价格低于基准且利空时)
+
     elif ratio < 0.8 and raw_change_pct < 0:
-        # 价格越低，跌幅打折。如果剩 10%，跌幅乘以 0.1，跌得极慢
-        final_change_pct = raw_change_pct * ratio
+        final_change_pct = raw_change_pct * max(0.25, ratio)
+
+    if ratio > 4:
+        final_change_pct -= min(0.18, (ratio - 4) * 0.02)
+
+    if ratio < 0.5 and raw_change_pct > 0:
+        final_change_pct += min(0.08, (0.5 - ratio) * 0.1)
 
     # --- 机制C: 熔断限制 (硬顶/硬底) ---
     # 单次涨跌幅限制在 ±35% 以内 (DOGE除外)
@@ -198,10 +202,8 @@ def calculate_next_price(stock_id, current_price, news_score):
 
     # --- 计算新价格 ---
     next_price = current_price * (1 + final_change_pct)
-    
-    # 保底价格 (防止变成负数或0)
-    if next_price < 0.5: 
-        next_price = 0.5
+    next_price = min(next_price, max_price)
+    next_price = max(next_price, min_price)
         
     return round(next_price, 2), round(final_change_pct * 100, 2)
 

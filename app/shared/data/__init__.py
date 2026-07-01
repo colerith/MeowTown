@@ -1,1 +1,0 @@
-"""Shared static data package."""

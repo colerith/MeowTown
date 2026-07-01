@@ -404,6 +404,12 @@ class FarmDashboardView(View):
         embed = await render_farm_embed(self.user_id, self.user_name, self.user_avatar)
         await interaction.message.edit(embed=embed, view=self)
 
+
+async def create_farm_dashboard(user: discord.abc.User):
+    embed = await render_farm_embed(user.id, user.display_name, user.display_avatar.url)
+    view = FarmDashboardView(user.id, user.display_name, user.display_avatar.url)
+    return embed, view
+
 # --- Farm Cog ---
 
 class Farm(commands.Cog):
@@ -413,53 +419,6 @@ class Farm(commands.Cog):
 
     def cog_unload(self):
         self.crop_checker.cancel()
-
-    farm = discord.SlashCommandGroup("农场", "经营你的喵喵农场")
-
-    @farm.command(name="查看", description="打开农场控制面板")
-    async def view(self, ctx: discord.ApplicationContext):
-        # 【修复点】这里添加了 defer，防止初始加载超时
-        await ctx.defer()
-        embed = await render_farm_embed(ctx.author.id, ctx.author.display_name, ctx.author.display_avatar.url)
-        view = FarmDashboardView(ctx.author.id, ctx.author.display_name, ctx.author.display_avatar.url)
-        await ctx.respond(embed=embed, view=view)
-
-    @farm.command(name="偷菜", description="潜入别人的农场偷菜")
-    async def steal(self, ctx: discord.ApplicationContext, target: discord.User):
-        if target.id == ctx.author.id:
-            await ctx.respond("❓ 你不能偷自己的。", ephemeral=True)
-            return
-
-        # 【修复点】偷菜也添加了 defer
-        await ctx.defer()
-
-        plots = await get_farm_state(target.id)
-        current_time = int(time.time())
-        stealable = []
-        
-        for row in plots:
-            if row[2]:
-                plant = PLANTS[row[2]]
-                if (current_time - row[3]) >= plant["time"]:
-                    stealable.append(row)
-        
-        if not stealable:
-            await ctx.respond("没熟或者没种，没法偷。", ephemeral=True)
-            return
-
-        target_plot = random.choice(stealable)
-        plant_id = target_plot[2]
-        plant = PLANTS[plant_id]
-        
-        if random.random() > 0.4:
-            income = int(calculate_harvest(plant_id) * 0.8)
-            await clear_plot(target.id, target_plot[1])
-            await update_money(ctx.author.id, income)
-            await ctx.respond(f"😈 偷到了 {target.mention} 的 **{plant['name']}**！卖了 {income} 喵币。")
-        else:
-            fine = 200
-            await update_money(ctx.author.id, -fine)
-            await ctx.respond(f"🐕 被 {target.mention} 的狗发现了！罚款 {fine} 喵币。")
 
     # --- 后台任务：检测作物并私信 ---
     @tasks.loop(minutes=2) 

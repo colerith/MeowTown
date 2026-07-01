@@ -1,6 +1,7 @@
 import asyncio
 import datetime
 import os
+from dataclasses import dataclass
 
 import discord
 from discord.ext import commands, tasks
@@ -9,16 +10,19 @@ from discord.ui import Button, InputText, Modal, Select, View
 from app.db.repositories.stock_repo import (
     borrow_money,
     buy_stock,
+    claim_stock_compensation,
     get_loan_amount,
     get_portfolio_with_prices,
     get_stock_price,
+    has_claimed_stock_compensation,
     initialize_stocks,
     list_market_stocks,
     repay_loan,
+    reset_stock_market,
     sell_stock,
     update_stock_quote,
 )
-from app.db.repositories.user_repo import get_user_money
+from app.db.repositories.user_repo import get_citizen, get_user_money, list_registered_user_ids
 from app.features.stock_market.service import (
     format_market_trend,
     parse_positive_amount,
@@ -28,7 +32,12 @@ from app.features.stock_market.service import (
 from app.shared.data.stock_data import STOCKS, calculate_next_price, generate_dynamic_news
 
 NEWS_CHANNEL_ID = 1443488941045977140
+REGISTERED_ROLE_ID = 1521848592476668005
+COMPENSATION_STOCK_OPTIONS = ("FISH", "CATN", "TOY", "BOX")
+COMPENSATION_SHARES_PER_STOCK = 100
 IMG_STOCK = "https://i.postimg.cc/gcSBzV0j/stock-market.png"
+
+
 def get_guide_embed():
     embed = discord.Embed(title="📈 喵尔街风云 · 投资指南", color=0xFFD700)
     embed.description = "欢迎来到喵喵小镇的金融中心！在这里，你可以一夜暴富，也可能天台排队。"
@@ -84,6 +93,245 @@ async def render_market_embed():
 
     embed.set_footer(text="数据每20分钟刷新一次 | 投资有风险，入市需谨慎")
     return embed
+
+
+@dataclass
+class CompensationAnnouncementConfig:
+    title: str = "📢 喵尔街补偿公告"
+    body: str = (
+        "近期喵尔街快讯刷新异常、部分企业股价出现失真膨胀，给大家的交易体验带来了影响。\n\n"
+        "我们已开始修复行情刷新与价格保护机制，并对股票数据执行重置处理。"
+    )
+    compensation_text: str = "已注册喵喵可免费领取 **2 个企业股票**，每个企业 **100 股**。"
+    rules_text: str = (
+        "1. 仅限已完成 `/市民 注册` 的喵喵领取\n"
+        "2. 每位喵喵仅可领取一次\n"
+        "3. 可选企业：咸鱼海运、猫薄荷生物、逗猫棒重工、纸箱地产"
+    )
+    note_text: str = "点击下方按钮后，选择两个不同企业即可立即入账。"
+    mention_registered_role: bool = False
+
+
+def build_compensation_embed(config: CompensationAnnouncementConfig | None = None):
+    config = config or CompensationAnnouncementConfig()
+    embed = discord.Embed(title=config.title, color=0xE67E22)
+    embed.description = config.body
+    embed.add_field(
+        name="补偿内容",
+        value=config.compensation_text,
+        inline=False,
+    )
+    embed.add_field(
+        name="领取规则",
+        value=config.rules_text,
+        inline=False,
+    )
+    embed.add_field(
+        name="说明",
+        value=config.note_text,
+        inline=False,
+    )
+    embed.set_footer(text="感谢大家的理解与支持，喵尔街正在恢复秩序。")
+    return embed
+
+
+class CompensationContentModal(Modal):
+    def __init__(self, parent_view):
+        super().__init__(title="编辑公告标题与正文")
+        self.parent_view = parent_view
+        self.add_item(InputText(label="公告标题", value=parent_view.config.title, max_length=100))
+        self.add_item(
+            InputText(
+                label="公告正文",
+                style=discord.InputTextStyle.long,
+                value=parent_view.config.body,
+                max_length=1000,
+            )
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        self.parent_view.config.title = self.children[0].value.strip() or self.parent_view.config.title
+        self.parent_view.config.body = self.children[1].value.strip() or self.parent_view.config.body
+        if self.parent_view.message is not None:
+            await self.parent_view.message.edit(embed=self.parent_view.build_preview_embed(), view=self.parent_view)
+        await interaction.response.send_message("✅ 公告标题与正文已更新。", ephemeral=True)
+
+
+class CompensationDetailModal(Modal):
+    def __init__(self, parent_view):
+        super().__init__(title="编辑补偿说明")
+        self.parent_view = parent_view
+        self.add_item(
+            InputText(
+                label="补偿内容",
+                style=discord.InputTextStyle.long,
+                value=parent_view.config.compensation_text,
+                max_length=600,
+            )
+        )
+        self.add_item(
+            InputText(
+                label="领取规则",
+                style=discord.InputTextStyle.long,
+                value=parent_view.config.rules_text,
+                max_length=1000,
+            )
+        )
+        self.add_item(
+            InputText(
+                label="补充说明",
+                style=discord.InputTextStyle.long,
+                value=parent_view.config.note_text,
+                max_length=500,
+            )
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        self.parent_view.config.compensation_text = self.children[0].value.strip() or self.parent_view.config.compensation_text
+        self.parent_view.config.rules_text = self.children[1].value.strip() or self.parent_view.config.rules_text
+        self.parent_view.config.note_text = self.children[2].value.strip() or self.parent_view.config.note_text
+        if self.parent_view.message is not None:
+            await self.parent_view.message.edit(embed=self.parent_view.build_preview_embed(), view=self.parent_view)
+        await interaction.response.send_message("✅ 补偿规则与说明已更新。", ephemeral=True)
+
+
+class CompensationStockSelect(Select):
+    def __init__(self):
+        options = [
+            discord.SelectOption(
+                label=f"{stock_id} - {STOCKS[stock_id]['name']}",
+                value=stock_id,
+                emoji=STOCKS[stock_id]["icon"],
+            )
+            for stock_id in COMPENSATION_STOCK_OPTIONS
+        ]
+        super().__init__(
+            placeholder="选择两个企业股票",
+            min_values=2,
+            max_values=2,
+            options=options,
+            custom_id="stock_compensation_select",
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        user = await get_citizen(interaction.user.id)
+        if not user:
+            return await interaction.response.send_message(
+                "🚫 仅限已注册喵喵领取，请先使用 `/市民 注册`。",
+                ephemeral=True,
+            )
+
+        if len(set(self.values)) != 2:
+            return await interaction.response.send_message("请准确选择两个不同企业。", ephemeral=True)
+
+        if await has_claimed_stock_compensation(interaction.user.id):
+            return await interaction.response.send_message("你已经领取过这次补偿了。", ephemeral=True)
+
+        success = await claim_stock_compensation(
+            interaction.user.id,
+            list(self.values),
+            COMPENSATION_SHARES_PER_STOCK,
+        )
+        if not success:
+            return await interaction.response.send_message("你已经领取过这次补偿了。", ephemeral=True)
+
+        stock_names = "、".join(STOCKS[stock_id]["name"] for stock_id in self.values)
+        await interaction.response.send_message(
+            f"✅ 补偿发放完成！你已领取 **{stock_names}** 各 **{COMPENSATION_SHARES_PER_STOCK}** 股。",
+            ephemeral=True,
+        )
+
+
+class CompensationClaimView(View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(
+        label="领取股票补偿",
+        style=discord.ButtonStyle.success,
+        emoji="🎁",
+        custom_id="stock_compensation_claim_button",
+    )
+    async def claim_btn(self, button, interaction):
+        user = await get_citizen(interaction.user.id)
+        if not user:
+            return await interaction.response.send_message(
+                "🚫 仅限已注册喵喵领取，请先使用 `/市民 注册`。",
+                ephemeral=True,
+            )
+
+        if await has_claimed_stock_compensation(interaction.user.id):
+            return await interaction.response.send_message("你已经领取过这次补偿了。", ephemeral=True)
+
+        view = View(timeout=120)
+        view.add_item(CompensationStockSelect())
+        await interaction.response.send_message(
+            "请选择两个不同企业股票，每个企业将补偿 100 股。",
+            view=view,
+            ephemeral=True,
+        )
+
+
+class CompensationConfigView(View):
+    def __init__(self):
+        super().__init__(timeout=900)
+        self.config = CompensationAnnouncementConfig()
+        self.message = None
+
+    def build_preview_embed(self):
+        embed = build_compensation_embed(self.config)
+        mention_status = "开启" if self.config.mention_registered_role else "关闭"
+        embed.add_field(name="发布设置", value=f"艾特喵喵镇民身份组：**{mention_status}**", inline=False)
+        return embed
+
+    @discord.ui.button(label="编辑标题正文", style=discord.ButtonStyle.primary, emoji="📝", row=0)
+    async def edit_content_btn(self, button, interaction):
+        self.message = interaction.message
+        await interaction.response.send_modal(CompensationContentModal(self))
+
+    @discord.ui.button(label="编辑补偿规则", style=discord.ButtonStyle.primary, emoji="🎁", row=0)
+    async def edit_detail_btn(self, button, interaction):
+        self.message = interaction.message
+        await interaction.response.send_modal(CompensationDetailModal(self))
+
+    @discord.ui.button(label="切换艾特镇民", style=discord.ButtonStyle.secondary, emoji="📣", row=0)
+    async def toggle_mention_btn(self, button, interaction):
+        self.config.mention_registered_role = not self.config.mention_registered_role
+        self.message = interaction.message
+        await interaction.response.edit_message(embed=self.build_preview_embed(), view=self)
+
+    @discord.ui.button(label="预览公告", style=discord.ButtonStyle.secondary, emoji="👀", row=1)
+    async def preview_btn(self, button, interaction):
+        await interaction.response.send_message(embed=build_compensation_embed(self.config), ephemeral=True)
+
+    @discord.ui.button(label="发布到频道", style=discord.ButtonStyle.success, emoji="✅", row=1)
+    async def publish_btn(self, button, interaction):
+        channel = interaction.client.get_channel(NEWS_CHANNEL_ID)
+        if not channel:
+            return await interaction.response.send_message("🚫 未找到目标频道，无法发布补偿公告。", ephemeral=True)
+
+        content = None
+        if self.config.mention_registered_role:
+            role = interaction.guild.get_role(REGISTERED_ROLE_ID) if interaction.guild else None
+            if role:
+                content = role.mention
+
+        await channel.send(
+            content=content,
+            embed=build_compensation_embed(self.config),
+            view=CompensationClaimView(),
+            allowed_mentions=discord.AllowedMentions(roles=True),
+        )
+        await interaction.response.send_message("✅ 补偿公告已发送到目标频道。", ephemeral=True)
+
+
+async def create_stock_market_dashboard():
+    return await render_market_embed(), StockDashboardView()
+
+
+async def open_compensation_config_panel(interaction: discord.Interaction):
+    view = CompensationConfigView()
+    await interaction.response.send_message(embed=view.build_preview_embed(), view=view, ephemeral=True)
 
 
 class TradeModal(Modal):
@@ -253,12 +501,11 @@ class StockDashboardView(View):
 class StockMarket(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        self.bot.add_view(CompensationClaimView())
         self.market_update.start()
 
     def cog_unload(self):
         self.market_update.cancel()
-
-    stock = discord.SlashCommandGroup("股市", "喵尔街股票交易中心")
 
     async def initialize_stocks(self):
         if not os.path.exists("./data"):
@@ -267,53 +514,62 @@ class StockMarket(commands.Cog):
 
     @tasks.loop(minutes=20)
     async def market_update(self):
+        await self.publish_market_update()
+
+    async def publish_market_update(self):
         news_embed = discord.Embed(title="📈 喵尔街快讯", color=0x3498DB)
+        channel = None
+        try:
+            for stock_id, data in STOCKS.items():
+                current_price = await get_stock_price(stock_id) or data["base_price"]
+                news, score = generate_dynamic_news(stock_id, current_price=current_price)
+                new_price, change_pct = calculate_next_price(stock_id, current_price, score)
+                price_diff = round(new_price - current_price, 2)
+                await update_stock_quote(stock_id, new_price, price_diff)
 
-        for stock_id, data in STOCKS.items():
-            current_price = await get_stock_price(stock_id) or data["base_price"]
-            news, score = generate_dynamic_news(stock_id, current_price=current_price)
-            new_price, change_pct = calculate_next_price(stock_id, current_price, score)
-            price_diff = new_price - current_price
-            await update_stock_quote(stock_id, new_price, price_diff)
+                if price_diff > 0:
+                    icon = "🔼"
+                elif price_diff < 0:
+                    icon = "🔽"
+                else:
+                    icon = "⏺️"
 
-            if price_diff > 0:
-                icon = "🔼"
-            elif price_diff < 0:
-                icon = "🔽"
+                news_embed.add_field(
+                    name=f"{data['icon']} {data['name']}",
+                    value=f"**{new_price:.2f}** {icon} ({change_pct:+.2f}%)\n> {news}",
+                    inline=False,
+                )
+
+            now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            news_embed.set_footer(text=f"最后刷新: {now_str} | 20分钟更新一次")
+
+            channel = self.bot.get_channel(NEWS_CHANNEL_ID)
+            if not channel:
+                return
+
+            bot_messages = []
+            async for message in channel.history(limit=100):
+                if message.author == self.bot.user and message.embeds:
+                    if message.embeds[0].title == "📈 喵尔街快讯":
+                        bot_messages.append(message)
+
+            if bot_messages:
+                latest_message = bot_messages[0]
+                try:
+                    await latest_message.edit(embed=news_embed)
+                    print(f"[{now_str}] 股市新闻已更新 (Edit)")
+                    for old_message in bot_messages[1:]:
+                        await old_message.delete()
+                        await asyncio.sleep(1)
+                except discord.NotFound:
+                    await channel.send(embed=news_embed)
             else:
-                icon = "⏺️"
-
-            news_embed.add_field(
-                name=f"{data['icon']} {data['name']}",
-                value=f"**{new_price:.2f}** {icon} ({change_pct:+.2f}%)\n> {news}",
-                inline=False,
-            )
-
-        now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        news_embed.set_footer(text=f"最后刷新: {now_str} | 20分钟更新一次")
-
-        channel = self.bot.get_channel(NEWS_CHANNEL_ID)
-        if not channel:
-            return
-
-        bot_messages = []
-        async for message in channel.history(limit=20):
-            if message.author == self.bot.user:
-                bot_messages.append(message)
-
-        if bot_messages:
-            latest_message = bot_messages[0]
-            try:
-                await latest_message.edit(embed=news_embed)
-                print(f"[{now_str}] 股市新闻已更新 (Edit)")
-                for old_message in bot_messages[1:]:
-                    await old_message.delete()
-                    await asyncio.sleep(1)
-            except discord.NotFound:
                 await channel.send(embed=news_embed)
-        else:
-            await channel.send(embed=news_embed)
-            print(f"[{now_str}] 股市新闻已发送 (New)")
+                print(f"[{now_str}] 股市新闻已发送 (New)")
+        except Exception as exc:
+            print(f"[StockMarket] market update failed: {exc}")
+            if channel is not None:
+                await channel.send(embed=news_embed)
 
     @market_update.before_loop
     async def before_market_update(self):
@@ -321,14 +577,58 @@ class StockMarket(commands.Cog):
         await asyncio.sleep(3)
         try:
             await self.initialize_stocks()
+            await self.publish_market_update()
         except Exception:
             pass
 
-    @stock.command(name="大厅", description="打开股票交易终端")
-    async def stock_dashboard(self, ctx: discord.ApplicationContext):
-        await ctx.defer()
-        embed = await render_market_embed()
-        await ctx.respond(embed=embed, view=StockDashboardView())
+    async def backfill_registered_role(self, guild: discord.Guild):
+        role = guild.get_role(REGISTERED_ROLE_ID)
+        if role is None:
+            return {"granted": 0, "skipped_existing": 0, "skipped_missing": 0, "failed": 0, "role_missing": True}
+
+        registered_user_ids = await list_registered_user_ids()
+        granted = 0
+        skipped_existing = 0
+        skipped_missing = 0
+        failed = 0
+
+        for index, user_id in enumerate(registered_user_ids, start=1):
+            member = guild.get_member(user_id)
+            if member is None:
+                try:
+                    member = await guild.fetch_member(user_id)
+                except discord.NotFound:
+                    skipped_missing += 1
+                    await asyncio.sleep(1.2)
+                    continue
+                except discord.HTTPException:
+                    failed += 1
+                    await asyncio.sleep(2)
+                    continue
+
+            if role in member.roles:
+                skipped_existing += 1
+            else:
+                try:
+                    await member.add_roles(role, reason="已注册喵喵补发身份组")
+                    granted += 1
+                except discord.HTTPException:
+                    failed += 1
+
+            await asyncio.sleep(1.2)
+            if index % 20 == 0:
+                await asyncio.sleep(3)
+
+        return {
+            "granted": granted,
+            "skipped_existing": skipped_existing,
+            "skipped_missing": skipped_missing,
+            "failed": failed,
+            "role_missing": False,
+        }
+
+    async def reset_market_data(self):
+        await reset_stock_market(STOCKS)
 
     async def check_bankruptcy(self, ctx, user_id):
         pass

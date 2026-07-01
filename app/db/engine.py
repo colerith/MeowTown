@@ -66,6 +66,16 @@ async def setup_db():
 			)
 			"""
 		)
+		await db.execute(
+			"""
+			CREATE TABLE IF NOT EXISTS stock_compensation_claims (
+				user_id INTEGER PRIMARY KEY,
+				stock_ids TEXT NOT NULL,
+				quantity_per_stock INTEGER NOT NULL,
+				claimed_at TEXT NOT NULL
+			)
+			"""
+		)
 
 		await db.execute(
 			"""

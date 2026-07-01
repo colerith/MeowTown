@@ -69,6 +69,13 @@ async def get_user(user_id):
     return await get_citizen(user_id)
 
 
+async def list_registered_user_ids():
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute("SELECT user_id FROM users ORDER BY user_id")
+        rows = await cursor.fetchall()
+        return [row[0] for row in rows]
+
+
 __all__ = [
     "create_citizen",
     "equip_accessory",
@@ -76,6 +83,7 @@ __all__ = [
     "get_citizen",
     "get_user_money",
     "get_user",
+    "list_registered_user_ids",
     "set_user_status",
     "update_citizen_look",
     "update_citizen_name",
