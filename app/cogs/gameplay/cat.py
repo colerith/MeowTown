@@ -309,21 +309,43 @@ class Cat(commands.Cog):
         if stock_cog is None:
             return await ctx.followup.send("🚫 股市模块未加载。", ephemeral=True)
 
-        await ctx.followup.send("⏳ 已开始补发镇民身份组，人数较多时可能需要一点时间，请稍等结果回执。", ephemeral=True)
+        progress_message = await ctx.followup.send(
+            "⏳ 已开始补发镇民身份组，正在统计与发放中...",
+            ephemeral=True,
+            wait=True,
+        )
+
+        async def update_progress(progress: dict):
+            try:
+                await progress_message.edit(
+                    content=(
+                        f"⏳ 正在补发镇民身份组\n"
+                        f"进度: **{progress['processed']}/{progress['total']}**\n"
+                        f"新增: **{progress['granted']}**\n"
+                        f"已拥有: **{progress['skipped_existing']}**\n"
+                        f"不在服务器: **{progress['skipped_missing']}**\n"
+                        f"失败: **{progress['failed']}**"
+                    )
+                )
+            except discord.HTTPException:
+                pass
 
         try:
-            result = await stock_cog.backfill_registered_role(ctx.guild)
+            result = await stock_cog.backfill_registered_role(ctx.guild, progress_callback=update_progress)
         except Exception as exc:
-            return await ctx.followup.send(f"🚫 补发过程中出现异常：{exc}", ephemeral=True)
+            return await progress_message.edit(content=f"🚫 补发过程中出现异常：{exc}")
 
         if result["role_missing"]:
-            return await ctx.followup.send("🚫 未找到目标身份组。", ephemeral=True)
+            return await progress_message.edit(content="🚫 未找到目标身份组。")
 
-        await ctx.followup.send(
-            f"✅ 身份组补发完成。\n新增: **{result['granted']}**\n"
-            f"已拥有: **{result['skipped_existing']}**\n"
-            f"不在服务器: **{result['skipped_missing']}**\n失败: **{result['failed']}**",
-            ephemeral=True,
+        await progress_message.edit(
+            content=(
+                f"✅ 身份组补发完成。\n"
+                f"新增: **{result['granted']}**\n"
+                f"已拥有: **{result['skipped_existing']}**\n"
+                f"不在服务器: **{result['skipped_missing']}**\n"
+                f"失败: **{result['failed']}**"
+            )
         )
 
     @citizen.command(name="发送签到面板", description="【仅限管理员】手动重发每日签到面板")

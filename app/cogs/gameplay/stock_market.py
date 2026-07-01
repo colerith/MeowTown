@@ -695,16 +695,34 @@ class StockMarket(commands.Cog):
             return
         await self.ensure_news_panel_stack_bottom(channel=message.channel)
 
-    async def backfill_registered_role(self, guild: discord.Guild):
+    async def backfill_registered_role(self, guild: discord.Guild, progress_callback=None):
         role = guild.get_role(REGISTERED_ROLE_ID)
         if role is None:
             return {"granted": 0, "skipped_existing": 0, "skipped_missing": 0, "failed": 0, "role_missing": True}
 
         registered_user_ids = await list_registered_user_ids()
+        total = len(registered_user_ids)
         granted = 0
         skipped_existing = 0
         skipped_missing = 0
         failed = 0
+
+        async def push_progress(index: int, *, force: bool = False):
+            if progress_callback is None:
+                return
+            if not force and index not in (1, total) and index % 10 != 0:
+                return
+
+            await progress_callback(
+                {
+                    "processed": index,
+                    "total": total,
+                    "granted": granted,
+                    "skipped_existing": skipped_existing,
+                    "skipped_missing": skipped_missing,
+                    "failed": failed,
+                }
+            )
 
         for index, user_id in enumerate(registered_user_ids, start=1):
             member = guild.get_member(user_id)
@@ -713,10 +731,12 @@ class StockMarket(commands.Cog):
                     member = await guild.fetch_member(user_id)
                 except discord.NotFound:
                     skipped_missing += 1
+                    await push_progress(index)
                     await asyncio.sleep(1.2)
                     continue
                 except discord.HTTPException:
                     failed += 1
+                    await push_progress(index)
                     await asyncio.sleep(2)
                     continue
 
@@ -729,9 +749,12 @@ class StockMarket(commands.Cog):
                 except discord.HTTPException:
                     failed += 1
 
+            await push_progress(index)
             await asyncio.sleep(1.2)
             if index % 20 == 0:
                 await asyncio.sleep(3)
+
+        await push_progress(total, force=True)
 
         return {
             "granted": granted,
