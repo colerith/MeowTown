@@ -1,7 +1,8 @@
 # cogs/title.py
 import discord
 from discord.ext import commands
-from app.db.base import get_citizen, update_money, unlock_title, check_title_owned, equip_user_title, get_user_titles
+from app.db.repositories.title_repo import check_title_owned, equip_user_title, get_user_titles, unlock_title
+from app.db.repositories.user_repo import get_citizen, update_money
 from app.shared.data.title_data import TITLES, RARITY_CONFIG, TITLE_DRAW_COST, draw_random_title
 
 class Title(commands.Cog):

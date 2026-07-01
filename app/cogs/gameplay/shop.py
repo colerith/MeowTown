@@ -1,12 +1,21 @@
 # cogs/shop.py
 import discord
-import aiosqlite
 from discord.ext import commands
-from app.db.base import (
-    get_citizen, update_money, add_item, use_item_from_db, get_items,
-    equip_accessory
+from app.db.repositories.farm_repo import accelerate_farm_growth
+from app.db.repositories.inventory_repo import add_item, get_items, use_item_from_db
+from app.db.repositories.monopoly_repo import (
+    activate_next_dice_fixed,
+    get_player_position,
+    get_property_owner,
+    place_roadblock,
 )
-from app.db.engine import DB_PATH
+from app.db.repositories.user_repo import (
+    equip_accessory,
+    get_equipped_accessory,
+    get_citizen,
+    update_citizen_name,
+    update_money,
+)
 from app.shared.data.shop_data import SHOP_ITEMS
 from app.shared.data.map_data import get_map_tile
 
@@ -18,9 +27,7 @@ class RenameModal(discord.ui.Modal):
 
     async def callback(self, interaction: discord.Interaction):
         new_name = self.children[0].value
-        async with aiosqlite.connect(DB_PATH) as db:
-            await db.execute("UPDATE users SET cat_name = ? WHERE user_id = ?", (new_name, self.user_id))
-            await db.commit()
+        await update_citizen_name(self.user_id, new_name)
         await interaction.response.send_message(f"✅ 改名成功！你现在叫 **{new_name}** 了。")
 
 class Shop(commands.Cog):
@@ -114,15 +121,12 @@ class Shop(commands.Cog):
         item_type = item_info.get("type", "unknown")
         
         if item_type == "cosmetic":
-            async with aiosqlite.connect(DB_PATH) as db:
-                cursor = await db.execute("SELECT cat_accessory FROM users WHERE user_id = ?", (ctx.author.id,))
-                row = await cursor.fetchone()
-                old_acc_icon = row[0]
-                if old_acc_icon:
-                    for name, data in SHOP_ITEMS.items():
-                        if data.get("icon") == old_acc_icon:
-                            await add_item(ctx.author.id, name, 1)
-                            break
+            old_acc_icon = await get_equipped_accessory(ctx.author.id)
+            if old_acc_icon:
+                for name, data in SHOP_ITEMS.items():
+                    if data.get("icon") == old_acc_icon:
+                        await add_item(ctx.author.id, name, 1)
+                        break
             await equip_accessory(ctx.author.id, item_info['icon'])
             await ctx.respond(f"👕 你换上了 **{物品名}**！真好看！\n(旧的配饰已放回背包)")
 
@@ -131,41 +135,28 @@ class Shop(commands.Cog):
 
         elif 物品名 in ["金坷垃", "超级金坷垃"]:
             reduce_time = 3600 if 物品名 == "金坷垃" else 18000
-            async with aiosqlite.connect(DB_PATH) as db:
-                await db.execute(
-                    "UPDATE farms SET planted_at = planted_at - ? WHERE user_id = ? AND plant_id IS NOT NULL",
-                    (reduce_time, ctx.author.id)
-                )
-                await db.commit()
+            await accelerate_farm_growth(ctx.author.id, reduce_time)
             await ctx.respond(f"🧪 撒下了 **{物品名}**！\n你的农场作物疯长了，距离成熟更近了！")
 
         elif 物品名 == "遥控骰子":
-            async with aiosqlite.connect(DB_PATH) as db:
-                await db.execute("UPDATE monopoly_players SET next_dice_fixed = 6 WHERE user_id = ?", (ctx.author.id,))
-                await db.commit()
+            await activate_next_dice_fixed(ctx.author.id)
             await ctx.respond("🎲 **遥控骰子**已激活！下一次在大富翁投掷必定为 6 点。")
         
         elif 物品名 == "路障":
-            async with aiosqlite.connect(DB_PATH) as db:
-                cursor = await db.execute("SELECT position FROM monopoly_players WHERE user_id = ?", (ctx.author.id,))
-                pos_row = await cursor.fetchone()
-                if not pos_row:
-                    await add_item(ctx.author.id, 物品名, 1)
-                    await ctx.respond("你还没开始大富翁游戏呢！", ephemeral=True)
-                    return
-                pos = pos_row[0]
-                
-                tile = get_map_tile(pos)
-                
-                cursor = await db.execute("SELECT owner_id FROM monopoly_properties WHERE map_id = ?", (tile['id'],))
-                owner_row = await cursor.fetchone()
-                if tile['type'] != 'property' or not owner_row or owner_row[0] != ctx.author.id:
-                    await add_item(ctx.author.id, 物品名, 1)
-                    await ctx.respond("路障只能放在 **自己的地产** 上！(道具已退还)", ephemeral=True)
-                    return
-                
-                await db.execute("UPDATE monopoly_properties SET effect = 'roadblock' WHERE map_id = ?", (tile['id'],))
-                await db.commit()
+            pos = await get_player_position(ctx.author.id)
+            if pos is None:
+                await add_item(ctx.author.id, 物品名, 1)
+                await ctx.respond("你还没开始大富翁游戏呢！", ephemeral=True)
+                return
+
+            tile = get_map_tile(pos)
+            owner_id = await get_property_owner(tile['id'])
+            if tile['type'] != 'property' or owner_id != ctx.author.id:
+                await add_item(ctx.author.id, 物品名, 1)
+                await ctx.respond("路障只能放在 **自己的地产** 上！(道具已退还)", ephemeral=True)
+                return
+
+            await place_roadblock(tile['id'])
             await ctx.respond(f"🚧 **路障**已放置在 {tile['name']}！下一位访客将支付双倍租金。")
             
         elif 物品名 == "保释卡":

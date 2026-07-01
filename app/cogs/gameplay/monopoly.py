@@ -1,11 +1,37 @@
-# cogs/monopoly.py
 import discord
 import random
-import aiosqlite
 from discord.ext import commands
 from discord.ui import View, Button, Select
-from app.db.base import get_citizen, update_money, add_item, use_item_from_db, get_items
-from app.db.engine import DB_PATH
+from app.db.repositories.inventory_repo import add_item, get_items, use_item_from_db
+from app.db.repositories.monopoly_repo import (
+    activate_next_dice_fixed,
+    bankrupt_player,
+    buy_property,
+    clear_next_dice_fixed,
+    decrement_jail_turn_and_add_bad_luck,
+    ensure_player,
+    get_owned_property_count,
+    get_owned_properties,
+    get_player_position,
+    get_player_state,
+    get_property_owner,
+    get_property_state,
+    move_player,
+    move_player_with_pass_go,
+    pay_bail,
+    pay_rent,
+    place_roadblock,
+    release_from_jail,
+    send_player_to_jail,
+    upgrade_property,
+)
+from app.db.repositories.user_repo import get_citizen, get_user_money, update_money
+from app.features.monopoly.service import (
+    build_status_text,
+    calculate_property_rent,
+    calculate_upgrade_cost,
+    handle_bad_luck_after_event,
+)
 from app.shared.data.map_data import (
     MAP, MAP_SIZE, PASS_GO_SALARY, BAIL_COST, 
     get_map_tile, get_random_event, is_bad_event, get_guaranteed_good_event
@@ -14,14 +40,7 @@ IMG_MONOPOLY = "https://i.postimg.cc/zDtPzCfq/monopoly.png"
 
 # --- 辅助函数：生成游戏状态 Embed ---
 async def render_game_embed(user_id, user_name, avatar_url, log_text=""):
-    async with aiosqlite.connect(DB_PATH) as db:
-        cursor = await db.execute("SELECT position, status, jail_turns_left, next_dice_fixed, bad_luck_count FROM monopoly_players WHERE user_id = ?", (user_id,))
-        player = await cursor.fetchone()
-        
-        if not player:
-            await db.execute("INSERT INTO monopoly_players (user_id, bad_luck_count) VALUES (?, 0)", (user_id,))
-            await db.commit()
-            player = (0, 'normal', 0, 0, 0)
+    player = await ensure_player(user_id)
     
     pos, status, turns, fixed_roll, luck = player
     current_tile = get_map_tile(pos)
@@ -32,12 +51,8 @@ async def render_game_embed(user_id, user_name, avatar_url, log_text=""):
     embed = discord.Embed(title=f"🎲 喵喵都市 - {user_name}", color=0x3498db)
     embed.set_thumbnail(url=avatar_url)
     embed.set_image(url=IMG_MONOPOLY)
-    
-    status_str = "🟢 自由行动" if status == 'normal' else f"🔒 禁闭中 ({turns}回合)"
-    if fixed_roll > 0: status_str += f" | 🎲 骰子锁定: {fixed_roll}"
 
-    luck_str = f" | 🌩️ 霉运值: {luck}/3" if luck > 0 else ""
-    status_str += luck_str
+    status_str = build_status_text(status, turns, fixed_roll, luck)
 
     if log_text:
         embed.description = f"📜 **最新动态**\n{log_text}"
@@ -53,7 +68,7 @@ class UpgradeSelect(Select):
     def __init__(self, properties):
         options = []
         for map_id, level, name, price in properties:
-            upgrade_cost = round(price * 0.5, 2)
+            upgrade_cost = calculate_upgrade_cost(price)
             rent = get_map_tile(map_id)['rent'][level-1]
             options.append(discord.SelectOption(
                 label=f"{name} (Lv.{level})",
@@ -67,20 +82,10 @@ class UpgradeSelect(Select):
         data_str = self.values[0].split("_")
         map_id = int(data_str[0])
         cost = float(data_str[1])
-        
-        # 使用单一连接完成检查和更新
-        async with aiosqlite.connect(DB_PATH) as db:
-            cursor = await db.execute("SELECT money FROM users WHERE user_id = ?", (interaction.user.id,))
-            res = await cursor.fetchone()
-            money = res[0] if res else 0
 
-            if money < cost:
-                return await interaction.response.send_message(f"🚫 资金不足！需要 {cost:.2f}", ephemeral=True)
-            
-            # 扣钱 + 升级
-            await db.execute("UPDATE users SET money = money - ? WHERE user_id = ?", (cost, interaction.user.id))
-            await db.execute("UPDATE monopoly_properties SET level = level + 1 WHERE map_id = ?", (map_id,))
-            await db.commit()
+        success, _ = await upgrade_property(interaction.user.id, map_id, cost)
+        if not success:
+            return await interaction.response.send_message(f"🚫 资金不足！需要 {cost:.2f}", ephemeral=True)
         
         tile = get_map_tile(map_id)
         await interaction.response.send_message(f"✅ **升级成功！**\n**{tile['name']}** 变得更加豪华了，租金大幅提升！", ephemeral=True)
@@ -108,44 +113,34 @@ class ItemSelect(Select):
         
         # 道具逻辑尽量保持简单，使用 update_money 等外部函数是可以的，因为这里没有外层 DB 锁
         if item_name == "出狱许可证":
-            async with aiosqlite.connect(DB_PATH) as db:
-                cursor = await db.execute("SELECT status FROM monopoly_players WHERE user_id = ?", (interaction.user.id,))
-                status = (await cursor.fetchone())[0]
-                if status != 'in_jail':
-                    return await interaction.response.send_message("你又没坐牢，用什么许可证？", ephemeral=True)
-                
-                # 扣除道具逻辑在 use_item_from_db 内部处理，这里没有外层锁，安全
-                if not await use_item_from_db(interaction.user.id, item_name):
-                    return await interaction.response.send_message("道具不足！", ephemeral=True)
+            player = await get_player_state(interaction.user.id)
+            status = player[1] if player else "normal"
+            if status != 'in_jail':
+                return await interaction.response.send_message("你又没坐牢，用什么许可证？", ephemeral=True)
 
-                await db.execute("UPDATE monopoly_players SET status = 'normal', jail_turns_left = 0 WHERE user_id = ?", (interaction.user.id,))
-                await db.commit()
+            if not await use_item_from_db(interaction.user.id, item_name):
+                return await interaction.response.send_message("道具不足！", ephemeral=True)
+
+            await release_from_jail(interaction.user.id)
             return await interaction.response.send_message("🔓 **出狱成功！** 你使用了出狱许可证，重获自由。", ephemeral=True)
 
         success = await use_item_from_db(interaction.user.id, item_name)
         if not success: return await interaction.response.send_message("道具不足！", ephemeral=True)
 
-        async with aiosqlite.connect(DB_PATH) as db:
-            if item_name == "遥控骰子":
-                await db.execute("UPDATE monopoly_players SET next_dice_fixed = 6 WHERE user_id = ?", (interaction.user.id,))
-                msg = "🎲 **遥控骰子生效！** 下次投掷必定为 6 点。"
-            elif item_name == "路障":
-                cursor = await db.execute("SELECT position FROM monopoly_players WHERE user_id = ?", (interaction.user.id,))
-                pos = (await cursor.fetchone())[0]
-                tile = get_map_tile(pos)
-                cursor = await db.execute("SELECT owner_id FROM monopoly_properties WHERE map_id = ?", (tile['id'],))
-                row = await cursor.fetchone()
-                
-                if tile['type'] != 'property' or not row or row[0] != interaction.user.id:
-                    # 归还道具 (注意：这里在 db 上下文中调用外部函数 add_item 也是危险的，最好手动写 SQL)
-                    # 为了安全，我们先 commit 关闭当前连接，再调用 add_item
-                    await db.commit() 
-                    await add_item(interaction.user.id, item_name)
-                    return await interaction.response.send_message("🚫 路障只能放在**自己的地产**上！道具已退还。", ephemeral=True)
-                
-                await db.execute("UPDATE monopoly_properties SET effect = 'roadblock' WHERE map_id = ?", (tile['id'],))
-                msg = f"🚧 **路障已放置！** {tile['name']} 的下次过路费翻倍。"
-            await db.commit()
+        if item_name == "遥控骰子":
+            await activate_next_dice_fixed(interaction.user.id)
+            msg = "🎲 **遥控骰子生效！** 下次投掷必定为 6 点。"
+        elif item_name == "路障":
+            pos = await get_player_position(interaction.user.id)
+            tile = get_map_tile(pos)
+            owner_id = await get_property_owner(tile['id'])
+
+            if tile['type'] != 'property' or owner_id != interaction.user.id:
+                await add_item(interaction.user.id, item_name)
+                return await interaction.response.send_message("🚫 路障只能放在**自己的地产**上！道具已退还。", ephemeral=True)
+
+            await place_roadblock(tile['id'])
+            msg = f"🚧 **路障已放置！** {tile['name']} 的下次过路费翻倍。"
             
         await interaction.response.send_message(msg, ephemeral=True)
 
@@ -166,12 +161,10 @@ class MonopolyDashboardView(View):
         tile = get_map_tile(pos)
         
         if status == 'normal' and tile['type'] == 'property':
-            async with aiosqlite.connect(DB_PATH) as db:
-                cursor = await db.execute("SELECT owner_id FROM monopoly_properties WHERE map_id = ?", (tile['id'],))
-                row = await cursor.fetchone()
-                if not row:
-                    can_buy = True
-                    self.current_tile_price = tile['price']
+            owner_id = await get_property_owner(tile['id'])
+            if owner_id is None:
+                can_buy = True
+                self.current_tile_price = tile['price']
         
         self.children[0].disabled = False 
         self.children[1].disabled = not can_buy
@@ -197,9 +190,7 @@ class MonopolyDashboardView(View):
         if interaction.user.id != self.user_id: return
         
         # 1. 获取玩家数据 (包括 bad_luck_count)
-        async with aiosqlite.connect(DB_PATH) as db:
-            cursor = await db.execute("SELECT * FROM monopoly_players WHERE user_id = ?", (self.user_id,))
-            player = await cursor.fetchone()
+        player = await ensure_player(self.user_id)
         
         user_id = player[0]
         current_pos = player[1]
@@ -213,35 +204,23 @@ class MonopolyDashboardView(View):
         
         # 2. 坐牢逻辑
         if status == 'in_jail':
-            async with aiosqlite.connect(DB_PATH) as db:
-                if turns_left > 0:
-                    await db.execute("UPDATE monopoly_players SET jail_turns_left = ? WHERE user_id = ?", (turns_left - 1, user_id))
-                    # 坐牢也算倒霉！霉运值+1
-                    await db.execute("UPDATE monopoly_players SET bad_luck_count = bad_luck_count + 1 WHERE user_id = ?", (user_id,))
-                    await db.commit()
-                    self.log = f"👮 **禁闭中...** (剩余 {turns_left - 1} 回合)\n🌩️ 坐牢太惨了，霉运值 +1"
-                    await self.refresh_ui(interaction)
-                    return 
-                else:
-                    await db.execute("UPDATE monopoly_players SET status = 'normal' WHERE user_id = ?", (user_id,))
-                    await db.commit()
-                    self.log += "🔓 **刑满释放！** 重获自由！\n"
+            if turns_left > 0:
+                await decrement_jail_turn_and_add_bad_luck(user_id, turns_left)
+                self.log = f"👮 **禁闭中...** (剩余 {turns_left - 1} 回合)\n🌩️ 坐牢太惨了，霉运值 +1"
+                await self.refresh_ui(interaction)
+                return
+            await release_from_jail(user_id)
+            self.log += "🔓 **刑满释放！** 重获自由！\n"
         
         # 3. 投掷与移动
         roll = fixed_roll if fixed_roll > 0 else random.randint(1, 6)
         
-        async with aiosqlite.connect(DB_PATH) as db:
-            if fixed_roll > 0:
-                await db.execute("UPDATE monopoly_players SET next_dice_fixed = 0 WHERE user_id = ?", (user_id,))
-            
-            new_pos = (current_pos + roll) % MAP_SIZE
-            await db.execute("UPDATE monopoly_players SET position = ? WHERE user_id = ?", (new_pos, user_id))
-            
-            if new_pos < current_pos: 
-                await db.execute("UPDATE users SET money = money + ? WHERE user_id = ?", (PASS_GO_SALARY, user_id))
-                self.log += f"💰 经过起点，领取工资 {PASS_GO_SALARY}！\n"
-            
-            await db.commit()
+        if fixed_roll > 0:
+            await clear_next_dice_fixed(user_id)
+
+        new_pos, passed_go = await move_player_with_pass_go(user_id, current_pos, roll, MAP_SIZE, PASS_GO_SALARY)
+        if passed_go:
+            self.log += f"💰 经过起点，领取工资 {PASS_GO_SALARY}！\n"
 
         tile = get_map_tile(new_pos)
         self.log += f"🎲 投出 **{roll}** 点 ➜ 🏃 来到 **{tile['name']}**"
@@ -252,32 +231,28 @@ class MonopolyDashboardView(View):
         if tile['type'] == 'property':
             # 踩到别人的地算倒霉吗？算！踩空地或者自己的地算运气好/中性
             # 这里简化处理：踩到别人的地且付了租金，霉运+1
-            async with aiosqlite.connect(DB_PATH) as db:
-                cursor = await db.execute("SELECT owner_id, level, effect FROM monopoly_properties WHERE map_id = ?", (tile['id'],))
-                prop = await cursor.fetchone()
-                
-                if not prop: 
-                    self.log += f"\n🏷️ 空地 (价格 {tile['price']:.2f})，可购买。"
-                    new_bad_luck = 0 # 遇到空地算运气不错，重置
-                elif prop[0] == user_id:
-                    self.log += f"\n🏠 回到自己的地盘。"
-                    new_bad_luck = max(0, new_bad_luck - 1) # 稍微减少霉运
-                else:
-                    rent = round(tile['rent'][prop[1]-1] * (2 if prop[2]=='roadblock' else 1), 2)
-                    try: owner_name = (await interaction.client.fetch_user(prop[0])).display_name
-                    except: owner_name = "神秘人"
-                    
-                    self.log += f"\n💸 支付租金 **{rent:.2f}** 给 {owner_name}。"
-                    if prop[2]=='roadblock': 
-                         self.log += " (🚧路障!)"
-                         await db.execute("UPDATE monopoly_properties SET effect = NULL WHERE map_id = ?", (tile['id'],))
-                    
-                    # 扣钱
-                    await db.execute("UPDATE users SET money = money - ? WHERE user_id = ?", (rent, user_id))
-                    await db.execute("UPDATE users SET money = money + ? WHERE user_id = ?", (rent, prop[0]))
-                    await db.commit()
-                    
-                    new_bad_luck += 1 # 倒霉！
+            prop = await get_property_state(tile['id'])
+
+            if not prop:
+                self.log += f"\n🏷️ 空地 (价格 {tile['price']:.2f})，可购买。"
+                new_bad_luck = 0
+            elif prop[0] == user_id:
+                self.log += f"\n🏠 回到自己的地盘。"
+                new_bad_luck = max(0, new_bad_luck - 1)
+            else:
+                rent = calculate_property_rent(tile, prop[1], prop[2])
+                try:
+                    owner_name = (await interaction.client.fetch_user(prop[0])).display_name
+                except Exception:
+                    owner_name = "神秘人"
+
+                self.log += f"\n💸 支付租金 **{rent:.2f}** 给 {owner_name}。"
+                if prop[2] == 'roadblock':
+                    self.log += " (🚧路障!)"
+
+                await pay_rent(user_id, prop[0], rent, map_id=tile['id'], clear_roadblock=(prop[2] == 'roadblock'))
+
+                new_bad_luck += 1
 
         elif tile['type'] in ['chance', 'destiny']:
             # --- 保底核心逻辑 ---
@@ -293,10 +268,7 @@ class MonopolyDashboardView(View):
             else:
                 event = get_random_event(tile['type'])
                 # 根据结果调整霉运值
-                if is_bad_event(event):
-                    new_bad_luck += 1
-                else:
-                    new_bad_luck = 0 # 抽到普通卡或好卡也清零（或者你可以改为 -1）
+                new_bad_luck = handle_bad_luck_after_event(new_bad_luck, is_bad_event(event))
 
             if event:
                 self.log += f"\n📜 **{event['text']}**"
@@ -304,9 +276,7 @@ class MonopolyDashboardView(View):
                 # ... (原来的事件处理代码，逻辑完全一样，为了简洁我只写关键变化) ...
                 if event['type'] == 'money':
                     val = event['value']
-                    async with aiosqlite.connect(DB_PATH) as db:
-                        await db.execute("UPDATE users SET money = money + ? WHERE user_id = ?", (val, user_id))
-                        await db.commit()
+                    await update_money(user_id, val)
                 
                 elif event['type'] == 'item':
                     await add_item(user_id, event['value'])
@@ -320,39 +290,29 @@ class MonopolyDashboardView(View):
                 elif event['type'] == 'move':
                     step = event['value']
                     final_pos = (new_pos + step) % MAP_SIZE
-                    async with aiosqlite.connect(DB_PATH) as db:
-                        await db.execute("UPDATE monopoly_players SET position = ? WHERE user_id = ?", (final_pos, user_id))
-                        await db.commit()
+                    await move_player(user_id, final_pos)
                     target_tile = get_map_tile(final_pos)
                     self.log += f"\n➡️ 移动到了 **{target_tile['name']}**"
 
                 elif event['type'] == 'move_to':
                     final_pos = event['value']
-                    async with aiosqlite.connect(DB_PATH) as db:
-                        await db.execute("UPDATE monopoly_players SET position = ? WHERE user_id = ?", (final_pos, user_id))
-                        await db.commit()
+                    await move_player(user_id, final_pos)
                     target_tile = get_map_tile(final_pos)
                     self.log += f"\n🚀 传送到了 **{target_tile['name']}**"
                 
                 elif event['type'] in ['pay_per_property', 'gain_per_property']:
-                    async with aiosqlite.connect(DB_PATH) as db:
-                        cursor = await db.execute("SELECT COUNT(*) FROM monopoly_properties WHERE owner_id = ?", (user_id,))
-                        count = (await cursor.fetchone())[0]
-                        total_amount = count * event['value']
-                        
-                        if event['type'] == 'pay_per_property':
-                            await db.execute("UPDATE users SET money = money - ? WHERE user_id = ?", (total_amount, user_id))
-                            self.log += f"\n📉 支付了 {total_amount:.2f} 维护费。"
-                        else:
-                            await db.execute("UPDATE users SET money = money + ? WHERE user_id = ?", (total_amount, user_id))
-                            self.log += f"\n📈 获得了 {total_amount:.2f} 收益。"
-                        await db.commit()
+                    count = await get_owned_property_count(user_id)
+                    total_amount = count * event['value']
+                    if event['type'] == 'pay_per_property':
+                        await update_money(user_id, -total_amount)
+                        self.log += f"\n📉 支付了 {total_amount:.2f} 维护费。"
+                    else:
+                        await update_money(user_id, total_amount)
+                        self.log += f"\n📈 获得了 {total_amount:.2f} 收益。"
 
         elif tile['type'] == 'tax':
             self.log += f"\n📉 缴纳税款 **{tile['fee']:.2f}**。"
-            async with aiosqlite.connect(DB_PATH) as db:
-                await db.execute("UPDATE users SET money = money - ? WHERE user_id = ?", (tile['fee'], user_id))
-                await db.commit()
+            await update_money(user_id, -tile['fee'])
 
         elif tile['type'] == 'go_to_jail':
             self.log += "\n🚓 坏事做尽，被带到了禁闭室！"
@@ -367,40 +327,28 @@ class MonopolyDashboardView(View):
     async def buy_btn(self, button, interaction):
         if interaction.user.id != self.user_id: return
         
-        async with aiosqlite.connect(DB_PATH) as db:
-            cursor = await db.execute("SELECT position FROM monopoly_players WHERE user_id = ?", (self.user_id,))
-            pos = (await cursor.fetchone())[0]
-            tile = get_map_tile(pos)
-            
-            cursor = await db.execute("SELECT owner_id FROM monopoly_properties WHERE map_id = ?", (tile['id'],))
-            if await cursor.fetchone():
+        pos = await get_player_position(self.user_id)
+        tile = get_map_tile(pos)
+
+        success, reason = await buy_property(self.user_id, tile['id'], tile['price'])
+        if not success:
+            if reason == "owned":
                 self.log = "❌ 手慢了！这块地刚刚被买走了。"
                 await self.refresh_ui(interaction)
                 return
-
-            cursor = await db.execute("SELECT money FROM users WHERE user_id = ?", (self.user_id,))
-            user_money = (await cursor.fetchone())[0]
-
-            if user_money < tile['price']:
+            if reason == "insufficient":
                 await interaction.response.send_message("资金不足！", ephemeral=True)
                 return
 
-            # 原子化操作：扣款 + 买地
-            await db.execute("UPDATE users SET money = money - ? WHERE user_id = ?", (tile['price'], self.user_id))
-            await db.execute("INSERT INTO monopoly_properties (map_id, owner_id, level) VALUES (?, ?, ?)", (tile['id'], self.user_id, 1))
-            await db.commit()
-            
-            self.log = f"🎉 **恭喜！**\n你花费 {tile['price']:.2f} 喵币买下了 **{tile['name']}**！"
-            
+        self.log = f"🎉 **恭喜！**\n你花费 {tile['price']:.2f} 喵币买下了 **{tile['name']}**！"
+             
         await self.refresh_ui(interaction)
 
     @discord.ui.button(label="资产", style=discord.ButtonStyle.secondary, emoji="🏰", row=0)
     async def asset_btn(self, button, interaction):
         if interaction.user.id != self.user_id: return
         
-        async with aiosqlite.connect(DB_PATH) as db:
-            cursor = await db.execute("SELECT map_id, level FROM monopoly_properties WHERE owner_id = ?", (self.user_id,))
-            rows = await cursor.fetchall()
+        rows = await get_owned_properties(self.user_id)
         
         if not rows:
             return await interaction.response.send_message("🚫 你名下没有任何房产。", ephemeral=True)
@@ -435,60 +383,27 @@ class MonopolyDashboardView(View):
     @discord.ui.button(label="保释", style=discord.ButtonStyle.danger, emoji="💸", row=1, disabled=True)
     async def bail_btn(self, button, interaction):
         if interaction.user.id != self.user_id: return
-        
-        async with aiosqlite.connect(DB_PATH) as db:
-            cursor = await db.execute("SELECT money FROM users WHERE user_id = ?", (self.user_id,))
-            money = (await cursor.fetchone())[0]
 
-            if money < BAIL_COST:
-                return await interaction.response.send_message(f"🚫 钱不够！保释需要 {BAIL_COST}。", ephemeral=True)
-            
-            await db.execute("UPDATE users SET money = money - ? WHERE user_id = ?", (BAIL_COST, self.user_id))
-            await db.execute("UPDATE monopoly_players SET status = 'normal', jail_turns_left = 0 WHERE user_id = ?", (self.user_id,))
-            await db.commit()
-            
+        success, _ = await pay_bail(self.user_id, BAIL_COST)
+        if not success:
+            return await interaction.response.send_message(f"🚫 钱不够！保释需要 {BAIL_COST}。", ephemeral=True)
+             
         self.log = "🔓 **保释成功！** 你自由了。"
         await self.refresh_ui(interaction)
 
     # 破产检查辅助函数
     async def check_bankruptcy(self, user_id):
-        async with aiosqlite.connect(DB_PATH) as db:
-            cursor = await db.execute("SELECT money FROM users WHERE user_id = ?", (user_id,))
-            res = await cursor.fetchone()
-            money = res[0] if res else 0
-
-            if money < 0:
-                self.log += f"\n🚨 **破产清算！** 资金不足 ({money:.2f})，所有房产充公。"
-                # 重置资产
-                await db.execute("UPDATE users SET money = 0 WHERE user_id = ?", (user_id,))
-                await db.execute("DELETE FROM monopoly_properties WHERE owner_id = ?", (user_id,))
-                await db.execute("UPDATE monopoly_players SET position = 0 WHERE user_id = ?", (user_id,))
-                await db.commit()
+        money = await get_user_money(user_id)
+        if money < 0:
+            self.log += f"\n🚨 **破产清算！** 资金不足 ({money:.2f})，所有房产充公。"
+            await bankrupt_player(user_id)
 
     async def _go_jail(self, user_id):
-        async with aiosqlite.connect(DB_PATH) as db:
-            await db.execute("UPDATE monopoly_players SET position = 10, status = 'in_jail', jail_turns_left = 3 WHERE user_id = ?", (user_id,))
-            await db.commit()
+        await send_player_to_jail(user_id)
 
 class Monopoly(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-
-    # 监听器：Cog 加载时自动升级数据库
-    @commands.Cog.listener()
-    async def on_ready(self):
-        await self.init_db()
-
-    async def init_db(self):
-        async with aiosqlite.connect(DB_PATH) as db:
-            # 尝试添加列，如果列已存在会报错，忽略报错即可
-            try:
-                await db.execute("ALTER TABLE monopoly_players ADD COLUMN bad_luck_count INTEGER DEFAULT 0")
-                await db.commit()
-                print("✅ [Monopoly] 数据库升级成功：已添加 bad_luck_count 字段。")
-            except Exception as e:
-                # 这里的错误通常是 "duplicate column name"，说明已经升级过了
-                pass
 
     @discord.slash_command(name="大富翁面板", description="打开大富翁游戏控制台")
     async def dashboard(self, ctx: discord.ApplicationContext):

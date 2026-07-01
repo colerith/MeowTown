@@ -10,7 +10,6 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 def _discover_extensions() -> list[str]:
     extensions: list[str] = []
-    migrated_stems: set[str] = set()
 
     # New structure: app/cogs/**/<module>.py
     new_cogs_root = PROJECT_ROOT / "app" / "cogs"
@@ -20,17 +19,6 @@ def _discover_extensions() -> list[str]:
                 continue
             relative_module = file_path.relative_to(PROJECT_ROOT).with_suffix("")
             extensions.append(".".join(relative_module.parts))
-            migrated_stems.add(file_path.stem)
-
-    # Backward-compatible fallback: existing cogs/*.py
-    legacy_cogs_root = PROJECT_ROOT / "cogs"
-    if legacy_cogs_root.exists():
-        for file_path in legacy_cogs_root.glob("*.py"):
-            if file_path.name == "__init__.py":
-                continue
-            if file_path.stem in migrated_stems:
-                continue
-            extensions.append(f"cogs.{file_path.stem}")
 
     return sorted(set(extensions))
 

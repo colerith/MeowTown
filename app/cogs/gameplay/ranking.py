@@ -1,9 +1,8 @@
 # cogs/ranking.py
 import discord
-import aiosqlite
 from discord.ext import commands
 from discord.ui import View, Select
-from app.db.engine import DB_PATH
+from app.db.repositories.ranking_repo import get_top_money_users, get_top_property_owners
 
 IMG_RANK = "https://i.postimg.cc/RCyR2z9z/ranking.png"
 
@@ -24,34 +23,21 @@ class RankSelect(Select):
         embed = discord.Embed(title="🏆 喵喵小镇风云榜", color=0xFFD700)
         embed.set_image(url=IMG_RANK)
         
-        async with aiosqlite.connect(DB_PATH) as db:
-            if rank_type == "money":
-                cursor = await db.execute("SELECT cat_name, money FROM users ORDER BY money DESC LIMIT 10")
-                rows = await cursor.fetchall()
-                desc = ""
-                for i, row in enumerate(rows):
-                    medal = ["🥇", "🥈", "🥉"][i] if i < 3 else f"`{i+1}.`"
-                    # 修改处：使用 :.2f 保留两位小数
-                    desc += f"{medal} **{row[0]}** - {row[1]:.2f} 喵币\n"
-                embed.add_field(name="💰 十大富豪", value=desc if desc else "暂无数据")
-                
-            elif rank_type == "land":
-                # 联表查询：统计 monopoly_properties 中 owner_id 出现的次数
-                sql = """
-                    SELECT u.cat_name, COUNT(p.map_id) as count 
-                    FROM monopoly_properties p 
-                    JOIN users u ON p.owner_id = u.user_id 
-                    GROUP BY p.owner_id 
-                    ORDER BY count DESC 
-                    LIMIT 10
-                """
-                cursor = await db.execute(sql)
-                rows = await cursor.fetchall()
-                desc = ""
-                for i, row in enumerate(rows):
-                    medal = ["🥇", "🥈", "🥉"][i] if i < 3 else f"`{i+1}.`"
-                    desc += f"{medal} **{row[0]}** - {row[1]} 处房产\n"
-                embed.add_field(name="🏰 十大地主", value=desc if desc else "暂无数据")
+        if rank_type == "money":
+            rows = await get_top_money_users()
+            desc = ""
+            for i, row in enumerate(rows):
+                medal = ["🥇", "🥈", "🥉"][i] if i < 3 else f"`{i+1}.`"
+                desc += f"{medal} **{row[0]}** - {row[1]:.2f} 喵币\n"
+            embed.add_field(name="💰 十大富豪", value=desc if desc else "暂无数据")
+            
+        elif rank_type == "land":
+            rows = await get_top_property_owners()
+            desc = ""
+            for i, row in enumerate(rows):
+                medal = ["🥇", "🥈", "🥉"][i] if i < 3 else f"`{i+1}.`"
+                desc += f"{medal} **{row[0]}** - {row[1]} 处房产\n"
+            embed.add_field(name="🏰 十大地主", value=desc if desc else "暂无数据")
 
         return embed
 

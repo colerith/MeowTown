@@ -5,11 +5,17 @@ import random
 import asyncio
 from discord.ext import commands, tasks
 from discord.ui import View, Select, Button
-from app.db.base import (
-    get_citizen, update_money, get_farm_state, plant_seed, clear_plot, 
-    add_farm_plot, get_items, use_item_from_db, add_item,
-    get_all_active_farms, mark_farm_notified
+from app.db.repositories.farm_repo import (
+    accelerate_farm_growth,
+    add_farm_plot,
+    clear_plot,
+    get_all_active_farms,
+    get_farm_state,
+    mark_farm_notified,
+    plant_seed,
 )
+from app.db.repositories.inventory_repo import add_item, get_items, use_item_from_db
+from app.db.repositories.user_repo import get_citizen, update_money
 from app.shared.data.farm_data import PLANTS, get_plant_by_name, calculate_harvest, RARITY
 from app.shared.data.shop_data import SHOP_ITEMS
 
@@ -363,13 +369,7 @@ class FarmDashboardView(View):
             else:
                 return await interaction.followup.send("🚫 你没有化肥！请点击【农场商店】购买。", ephemeral=True)
         
-        import aiosqlite
-        async with aiosqlite.connect("./data/meowtown.db") as db:
-            await db.execute(
-                "UPDATE farms SET planted_at = planted_at - ? WHERE user_id = ? AND plant_id IS NOT NULL",
-                (reduce, self.user_id)
-            )
-            await db.commit()
+        await accelerate_farm_growth(self.user_id, reduce)
             
         await interaction.followup.send(f"🧪 撒下了 **{name}**！所有作物加速生长了。", ephemeral=True)
         # 刷新界面

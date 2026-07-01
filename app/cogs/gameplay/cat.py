@@ -2,12 +2,11 @@
 import discord
 from discord.ext import commands
 from discord.ui import View, Select, Button
-from app.db.base import (
-    create_citizen, get_citizen, update_citizen_look, update_money, 
-    equip_accessory, get_user_titles, get_items, add_item
-)
-from app.shared.data.cat_data import generate_cat_identity, SPECIAL_COMBOS
-from app.shared.data.title_data import TITLES, RARITY_CONFIG
+from app.db.repositories.inventory_repo import add_item, get_items
+from app.db.repositories.title_repo import get_user_titles
+from app.db.repositories.user_repo import create_citizen, get_citizen, update_citizen_look, update_money
+from app.shared.data.cat_data import generate_cat_identity
+from app.shared.data.title_data import TITLES
 from app.shared.data.shop_data import SHOP_ITEMS 
 
 # --- 迷你商店组件 ---

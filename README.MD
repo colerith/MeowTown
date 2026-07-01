@@ -1,93 +1,81 @@
-# MeowTown Bot 重构规划（目录拆分版）
+# MeowTown Bot
 
-本 README 先定义**目标目录结构**与**拆分迁移计划**，方便后续逐步重构。
+MeowTown 是一个以“猫咪小镇”为主题的 Discord Bot，提供注册养成、农场挂机、股市交易、大富翁、商店道具、称号收集和排行榜等玩法。
 
-当前目标是把你提到的内容归位：
-- UI 相关放一起
-- init/启动与配置放一起
-- 核心 Cog 放一起
-- DB 访问层放一起
-- 各功能模块按领域拆包
+项目目前已经完成主要目录重构，代码按 `cogs / features / db / shared` 分层组织，方便继续扩展功能和维护。
 
----
+详细架构说明见：[docs/ARCHITECTURE.MD](D:/SillyTavern/dc%20bot制作/MeowTown/docs/ARCHITECTURE.MD)
 
-## 1. 当前结构（简化）
+## 功能简介
 
-```text
-MeowTown/
-├─ main.py
-├─ requirements.txt
-├─ cogs/
-│  ├─ admin.py
-│  ├─ cat.py
-│  ├─ farm.py
-│  ├─ general.py
-│  ├─ monopoly.py
-│  ├─ ranking.py
-│  ├─ shop.py
-│  ├─ stock_market.py
-│  ├─ title.py
-│  ├─ core/
-│  │  └─ database.py
-│  └─ modules/
-│     └─ profile/
-│        ├─ __init__.py
-│        ├─ cog.py
-│        ├─ data.py
-│        ├─ database.py
-│        └─ ui.py
-└─ utils/
-	├─ cat_data.py
-	├─ farm_data.py
-	├─ map_data.py
-	├─ shop_data.py
-	├─ stock_data.py
-	├─ title_data.py
-	├─ checks.py
-	├─ db.py
-	└─ helpers.py
+- 市民系统：注册猫咪身份，生成名字、品种、花色与初始资金。
+- 农场系统：种植、收获、扩建、偷菜、使用农场道具。
+- 股市系统：查看行情、买入卖出、融资还款、查看投资组合。
+- 大富翁系统：投骰子移动、买地、升级、收租、使用道具、坐牢与保释。
+- 商店与背包：购买功能道具、配饰、改名卡等，并在背包中使用。
+- 称号系统：抽取称号、收集称号、佩戴展示。
+- 排行榜：查看资产榜、地产榜等排名。
+- 管理与通用命令：基础帮助、Bot 管理类命令。
+
+## 技术栈
+
+- Python 3.11+
+- [py-cord](https://docs.pycord.dev/)
+- `aiosqlite`
+- `python-dotenv`
+
+## 快速开始
+
+### 1. 安装依赖
+
+```bash
+pip install -r requirements.txt
 ```
 
-问题点：
-- `cogs/`、`cogs/modules/`、`utils/` 职责有交叉（业务逻辑、数据、DB、UI 混在不同层级）。
-- `core/database.py` 与 `utils/db.py` 可能重复职责。
-- 功能模块（cat/farm/shop/title 等）尚未统一成“模块包”形态。
+### 2. 配置环境变量
 
----
+在项目根目录创建 `.env` 文件：
 
-## 2. 目标结构（建议）
+```env
+DISCORD_TOKEN=你的机器人Token
+OWNER_IDS=123456789012345678,987654321098765432
+```
+
+说明：
+
+- `DISCORD_TOKEN`：Discord Bot Token，必填。
+- `OWNER_IDS`：Bot 管理员用户 ID，多个用英文逗号分隔；不填时会使用代码中的默认值。
+
+### 3. 启动 Bot
+
+```bash
+python main.py
+```
+
+启动入口：
+
+- [main.py](D:/SillyTavern/dc%20bot制作/MeowTown/main.py)
+- [app/bootstrap.py](D:/SillyTavern/dc%20bot制作/MeowTown/app/bootstrap.py)
+
+## 项目结构
+
+当前项目主结构如下：
 
 ```text
 MeowTown/
 ├─ app/
-│  ├─ __init__.py
-│  ├─ bootstrap.py                # 启动入口（原 main.py 逻辑拆过来）
+│  ├─ bootstrap.py
 │  ├─ config/
-│  │  ├─ __init__.py
-│  │  └─ settings.py              # token、前缀、环境变量读取
+│  │  └─ settings.py
 │  ├─ core/
-│  │  ├─ __init__.py
-│  │  ├─ bot.py                   # Bot 构造与基础事件
-│  │  ├─ loader.py                # 扩展/cog 自动加载
-│  │  └─ lifecycle.py             # 启停流程（on_ready、shutdown）
-│  ├─ db/
-│  │  ├─ __init__.py
-│  │  ├─ engine.py                # 连接管理
-│  │  ├─ base.py                  # 通用 DB 操作
-│  │  └─ repositories/
-│  │     ├─ __init__.py
-│  │     ├─ user_repo.py
-│  │     ├─ farm_repo.py
-│  │     ├─ shop_repo.py
-│  │     └─ stock_repo.py
+│  │  ├─ bot.py
+│  │  ├─ lifecycle.py
+│  │  └─ loader.py
 │  ├─ cogs/
-│  │  ├─ __init__.py
 │  │  ├─ core/
-│  │  │  ├─ __init__.py
 │  │  │  ├─ admin.py
 │  │  │  └─ general.py
 │  │  └─ gameplay/
-│  │     ├─ __init__.py
 │  │     ├─ cat.py
 │  │     ├─ farm.py
 │  │     ├─ monopoly.py
@@ -95,167 +83,103 @@ MeowTown/
 │  │     ├─ shop.py
 │  │     ├─ stock_market.py
 │  │     └─ title.py
+│  ├─ db/
+│  │  ├─ engine.py
+│  │  └─ repositories/
+│  │     ├─ farm_repo.py
+│  │     ├─ inventory_repo.py
+│  │     ├─ monopoly_repo.py
+│  │     ├─ ranking_repo.py
+│  │     ├─ stock_repo.py
+│  │     ├─ title_repo.py
+│  │     └─ user_repo.py
 │  ├─ features/
-│  │  ├─ __init__.py
+│  │  ├─ monopoly/
+│  │  │  └─ service.py
 │  │  ├─ profile/
-│  │  │  ├─ __init__.py
 │  │  │  ├─ cog.py
-│  │  │  ├─ service.py            # 业务规则（由 data.py 拆分升级）
-│  │  │  ├─ repository.py         # 模块专属 DB 封装（由 database.py 迁移）
-│  │  │  └─ ui/
-│  │  │     ├─ __init__.py
-│  │  │     ├─ views.py
-│  │  │     └─ modals.py
-│  │  ├─ cat/
-│  │  │  ├─ __init__.py
-│  │  │  ├─ service.py
 │  │  │  ├─ repository.py
+│  │  │  ├─ service.py
 │  │  │  └─ ui/
-│  │  │     ├─ __init__.py
+│  │  │     ├─ modals.py
 │  │  │     └─ views.py
-│  │  └─ ...
+│  │  └─ stock_market/
+│  │     └─ service.py
 │  ├─ shared/
-│  │  ├─ __init__.py
 │  │  ├─ checks.py
-│  │  ├─ helpers.py
 │  │  ├─ constants.py
+│  │  ├─ helpers.py
 │  │  └─ data/
-│  │     ├─ __init__.py
+│  │     ├─ cat_data.py
+│  │     ├─ farm_data.py
 │  │     ├─ map_data.py
-│  │     └─ ...
+│  │     ├─ shop_data.py
+│  │     ├─ stock_data.py
+│  │     └─ title_data.py
 │  └─ ui/
-│     ├─ __init__.py
-│     ├─ components/
-│     │  ├─ __init__.py
-│     │  ├─ buttons.py
-│     │  └─ embeds.py
-│     └─ themes.py
+│     └─ components/
+├─ data/
+├─ docs/
+│  └─ ARCHITECTURE.MD
 ├─ tests/
-│  ├─ __init__.py
-│  ├─ test_profile.py
-│  └─ ...
-├─ main.py                         # 仅保留极薄入口，调用 app.bootstrap.run()
-├─ requirements.txt
-└─ README.MD
+│  ├─ test_feature_services.py
+│  └─ test_repositories.py
+├─ .env
+├─ .gitignore
+├─ main.py
+├─ README.MD
+└─ requirements.txt
 ```
 
----
+## 目录说明
 
-## 3. 模块拆分原则
+- `app/core`：Bot 初始化、日志、生命周期、扩展加载。
+- `app/cogs`：Discord 命令入口层。
+- `app/features`：按功能聚合的业务逻辑与专属 UI。
+- `app/db`：数据库初始化与仓储层。
+- `app/shared`：公共检查器、帮助方法、静态数据。
+- `tests`：仓储集成测试与 service 单元测试。
+- `docs`：架构与迁移说明文档。
 
-1. **按职责分层**
-	- `cogs/`：Discord 命令与事件入口。
-	- `features/`：业务规则、模块内聚逻辑。
-	- `db/`：数据库连接与仓储访问。
-	- `ui/`：可复用交互组件（View/Modal/Button/Embed）。
-	- `shared/`：公共工具、校验、常量、静态数据。
+## 运行机制
 
-2. **Cog 保持“薄”**
-	- Cog 只做参数解析、权限检查、调用 service。
-	- 业务逻辑放 `features/*/service.py`。
+- 启动时由 [app/core/loader.py](D:/SillyTavern/dc%20bot制作/MeowTown/app/core/loader.py) 自动扫描并加载 `app/cogs/**` 下的扩展。
+- 数据库由 [app/db/engine.py](D:/SillyTavern/dc%20bot制作/MeowTown/app/db/engine.py) 负责建表与迁移。
+- 主要数据访问通过 `app/db/repositories/` 统一收口。
+- 一部分纯业务规则已经下沉到 `app/features/*/service.py`，用于减少 Cog 体积并提升可测试性。
 
-3. **DB 访问统一出口**
-	- 不在 cog 里直接 SQL。
-	- 由 `db/repositories/*` 或 `features/*/repository.py` 封装。
+## 测试
 
-4. **UI 组件可复用**
-	- 模块专属 UI 放 `features/<module>/ui/`。
-	- 跨模块通用 UI 放 `app/ui/components/`。
+当前已补齐首批核心测试，包含：
 
----
+- repository 集成测试：
+  - `user_repo`
+  - `farm_repo`
+  - `inventory_repo`
+  - `title_repo`
+  - `ranking_repo`
+  - `stock_repo`
+  - `monopoly_repo`
+  - `app/features/profile/repository.py`
+- service 单元测试：
+  - `app/features/profile/service.py`
+  - `app/features/monopoly/service.py`
+  - `app/features/stock_market/service.py`
 
-## 4. 旧文件到新结构映射（第一版）
+运行测试：
 
-- `main.py` -> `app/bootstrap.py` + 保留薄 `main.py`
-- `cogs/admin.py` -> `app/cogs/core/admin.py`
-- `cogs/general.py` -> `app/cogs/core/general.py`
-- `cogs/cat.py` -> `app/cogs/gameplay/cat.py`
-- `cogs/farm.py` -> `app/cogs/gameplay/farm.py`
-- `cogs/monopoly.py` -> `app/cogs/gameplay/monopoly.py`
-- `cogs/ranking.py` -> `app/cogs/gameplay/ranking.py`
-- `cogs/shop.py` -> `app/cogs/gameplay/shop.py`
-- `cogs/stock_market.py` -> `app/cogs/gameplay/stock_market.py`
-- `cogs/title.py` -> `app/cogs/gameplay/title.py`
-- `cogs/core/database.py` + `utils/db.py` -> `app/db/engine.py` + `app/db/base.py`
-- `cogs/modules/profile/ui.py` -> `app/features/profile/ui/views.py`
-- `cogs/modules/profile/database.py` -> `app/features/profile/repository.py`
-- `cogs/modules/profile/data.py` -> `app/features/profile/service.py`
-- `utils/checks.py` -> `app/shared/checks.py`
-- `utils/helpers.py` -> `app/shared/helpers.py`
-- `utils/*_data.py` -> `app/shared/data/*_data.py`
+```bash
+python -m unittest -v
+```
 
----
+## 开发说明
 
-## 5. 分阶段重构计划（建议按顺序）
+- 新功能优先放到 `app/*` 新结构中，不再恢复旧路径写法。
+- SQL 不直接写在 Cog 中，统一通过 repository 或 feature repository 处理。
+- 纯业务逻辑优先沉到 `service.py`，便于补测试和后续维护。
 
-### Phase 0：建立骨架（不改逻辑）
-- 创建 `app/` 目录及子包，补齐 `__init__.py`。
-- 先复制文件到新位置，不删旧文件。
-- 让 `main.py` 优先从新路径导入；失败时可临时回退旧导入。
+## 后续方向
 
-### Phase 1：启动与加载解耦
-- 把 bot 初始化、cog 加载、配置读取从 `main.py` 拆到：
-  - `app/core/bot.py`
-  - `app/core/loader.py`
-  - `app/config/settings.py`
-
-### Phase 2：DB 合并与仓储化
-- 合并 `cogs/core/database.py` 与 `utils/db.py` 的重复能力。
-- 统一连接生命周期，暴露 repository 接口。
-- 先改一个模块（建议 profile）验证模式，再批量迁移。
-
-### Phase 3：模块化 features
-- 将 `cogs/modules/profile` 迁移到 `app/features/profile`。
-- 把模块里的 UI/Service/Repository 明确分层。
-- 其他玩法模块（cat/farm/shop/title/stock）按同模板迁移。
-
-### Phase 4：Cog 瘦身
-- 各 Cog 仅保留命令入口、权限检查、响应组织。
-- 复杂业务逻辑移动到 `features/*/service.py`。
-
-### Phase 5：清理旧路径
-- 确认新路径稳定后，删除旧目录：
-  - `cogs/modules/`（旧）
-  - `utils/` 中已迁移文件
-  - 旧 DB 封装文件
-
----
-
-## 6. 重构验收清单
-
-- 启动成功，cog 全部正常加载。
-- 主要命令（admin/general/cat/farm/shop/stock/title）可执行。
-- profile 相关 UI（View/Modal）交互正常。
-- 数据库读写行为与重构前一致。
-- 日志无明显导入路径错误、循环依赖错误。
-
----
-
-## 7. 下一步实施建议
-
-建议按以下最小可行顺序推进：
-1. 先完成 Phase 0 + Phase 1（只搬结构与启动逻辑）。
-2. 以 profile 为样板完成 Phase 2 + Phase 3。
-3. 样板稳定后批量迁移其余 gameplay 模块。
-
-如果你希望，我下一步可以直接按这个 README 开始执行 **Phase 0（创建新目录骨架 + 迁移入口）**，并保持功能不变。
-
----
-
-## 8. 当前实施进度（2026-04-17）
-
-已完成：
-- 新增 `app/` 骨架目录与主要子包（`config/core/db/cogs/features/shared/ui`）。
-- 启动入口已拆分到 `app/bootstrap.py`，`main.py` 改为薄入口调用。
-- 新增 `app/core/loader.py` 与 `app/core/lifecycle.py`，承接插件加载与事件处理。
-- 已将 `admin`、`general` 迁移到 `app/cogs/core/`（真实实现已放在新路径，旧路径为 shim）。
-- 已将 `cat/farm/monopoly/ranking/shop/stock_market/title` 迁移到 `app/cogs/gameplay/`（真实实现已放在新路径，旧路径为 shim）。
-- 已将 `profile` 拆分路径接入到 `app/features/profile/`（`cog/service/repository/ui` 兼容导出）。
-- 已建立 `app/shared/` 与 `app/db/` 的兼容导出层，可逐步把旧 import 切换到新命名空间。
-- 已完成主流程 Cog 对 `utils.*` 的首轮切换，改为从 `app.shared.*` / `app.db.*` 导入。
-- 加载器已处理“新旧同名 cog 去重加载”，避免重复注册命令。
-
-下一步建议：
-1. 将 `app/features/profile/*` 从“兼容导出”升级为“真实实现文件”。
-2. 合并 `utils/db.py` 与 `cogs/core/database.py` 的底层实现到 `app/db/`，完成后下线旧 DB 入口。
-3. 当 `app/db` 与 `app/shared` 底层稳定后，移除 `utils/` 兼容层并清理旧路径。
+- 继续将 `cat / farm / shop / title` 中可抽离的规则迁移到 `app/features/*/service.py`。
+- 继续补交互层和启动层的最小回归测试。
+- 持续保持 README 与架构文档同步。
