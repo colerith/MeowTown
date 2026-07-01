@@ -36,6 +36,8 @@ REGISTERED_ROLE_ID = 1521848592476668005
 COMPENSATION_STOCK_OPTIONS = ("FISH", "CATN", "TOY", "BOX")
 COMPENSATION_SHARES_PER_STOCK = 100
 IMG_STOCK = "https://i.postimg.cc/gcSBzV0j/stock-market.png"
+STOCK_NEWS_TITLE = "📈 喵尔街快讯"
+STOCK_NEWS_PANEL_ID = "stock_news_panel_v1"
 
 
 def get_guide_embed():
@@ -93,6 +95,40 @@ async def render_market_embed():
 
     embed.set_footer(text="数据每20分钟刷新一次 | 投资有风险，入市需谨慎")
     return embed
+
+
+def is_stock_news_message(message: discord.Message):
+    if message.author.bot is False or not message.embeds:
+        return False
+    embed = message.embeds[0]
+    return embed.title == STOCK_NEWS_TITLE and (embed.url or "").endswith(STOCK_NEWS_PANEL_ID)
+
+
+async def build_stock_news_embed():
+    news_embed = discord.Embed(title=STOCK_NEWS_TITLE, color=0x3498DB, url=f"https://panel.local/{STOCK_NEWS_PANEL_ID}")
+    for stock_id, data in STOCKS.items():
+        current_price = await get_stock_price(stock_id) or data["base_price"]
+        news, score = generate_dynamic_news(stock_id, current_price=current_price)
+        new_price, change_pct = calculate_next_price(stock_id, current_price, score)
+        price_diff = round(new_price - current_price, 2)
+        await update_stock_quote(stock_id, new_price, price_diff)
+
+        if price_diff > 0:
+            icon = "🔼"
+        elif price_diff < 0:
+            icon = "🔽"
+        else:
+            icon = "⏺️"
+
+        news_embed.add_field(
+            name=f"{data['icon']} {data['name']}",
+            value=f"**{new_price:.2f}** {icon} ({change_pct:+.2f}%)\n> {news}",
+            inline=False,
+        )
+
+    now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    news_embed.set_footer(text=f"最后刷新: {now_str} | 20分钟更新一次 | 面板ID:{STOCK_NEWS_PANEL_ID}")
+    return news_embed, now_str
 
 
 @dataclass
@@ -501,11 +537,21 @@ class StockDashboardView(View):
 class StockMarket(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.bot.add_view(CompensationClaimView())
-        self.market_update.start()
+        self.runtime_ready = False
+        self.compensation_view = CompensationClaimView()
+        self.panel_lock = asyncio.Lock()
 
     def cog_unload(self):
-        self.market_update.cancel()
+        if self.market_update.is_running():
+            self.market_update.cancel()
+
+    async def ensure_runtime_ready(self):
+        if self.runtime_ready:
+            return
+        self.bot.add_view(self.compensation_view)
+        if not self.market_update.is_running():
+            self.market_update.start()
+        self.runtime_ready = True
 
     async def initialize_stocks(self):
         if not os.path.exists("./data"):
@@ -517,69 +563,102 @@ class StockMarket(commands.Cog):
         await self.publish_market_update()
 
     async def publish_market_update(self):
-        news_embed = discord.Embed(title="📈 喵尔街快讯", color=0x3498DB)
         channel = None
         try:
-            for stock_id, data in STOCKS.items():
-                current_price = await get_stock_price(stock_id) or data["base_price"]
-                news, score = generate_dynamic_news(stock_id, current_price=current_price)
-                new_price, change_pct = calculate_next_price(stock_id, current_price, score)
-                price_diff = round(new_price - current_price, 2)
-                await update_stock_quote(stock_id, new_price, price_diff)
-
-                if price_diff > 0:
-                    icon = "🔼"
-                elif price_diff < 0:
-                    icon = "🔽"
-                else:
-                    icon = "⏺️"
-
-                news_embed.add_field(
-                    name=f"{data['icon']} {data['name']}",
-                    value=f"**{new_price:.2f}** {icon} ({change_pct:+.2f}%)\n> {news}",
-                    inline=False,
-                )
-
-            now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            news_embed.set_footer(text=f"最后刷新: {now_str} | 20分钟更新一次")
-
+            news_embed, now_str = await build_stock_news_embed()
             channel = self.bot.get_channel(NEWS_CHANNEL_ID)
             if not channel:
                 return
-
-            bot_messages = []
-            async for message in channel.history(limit=100):
-                if message.author == self.bot.user and message.embeds:
-                    if message.embeds[0].title == "📈 喵尔街快讯":
-                        bot_messages.append(message)
-
-            if bot_messages:
-                latest_message = bot_messages[0]
-                try:
-                    await latest_message.edit(embed=news_embed)
-                    print(f"[{now_str}] 股市新闻已更新 (Edit)")
-                    for old_message in bot_messages[1:]:
-                        await old_message.delete()
-                        await asyncio.sleep(1)
-                except discord.NotFound:
-                    await channel.send(embed=news_embed)
-            else:
-                await channel.send(embed=news_embed)
-                print(f"[{now_str}] 股市新闻已发送 (New)")
+            await self.ensure_news_panel_stack_bottom(channel=channel, embed=news_embed)
+            print(f"[{now_str}] 股市新闻已更新")
         except Exception as exc:
             print(f"[StockMarket] market update failed: {exc}")
             if channel is not None:
-                await channel.send(embed=news_embed)
+                news_embed = discord.Embed(
+                    title=STOCK_NEWS_TITLE,
+                    color=0x3498DB,
+                    url=f"https://panel.local/{STOCK_NEWS_PANEL_ID}",
+                )
+                news_embed.description = "股市面板刷新时出现异常，请等待下一轮自动更新。"
+                news_embed.set_footer(text=f"面板ID:{STOCK_NEWS_PANEL_ID}")
+                await self.ensure_news_panel_stack_bottom(channel=channel, embed=news_embed)
 
     @market_update.before_loop
     async def before_market_update(self):
         await self.bot.wait_until_ready()
+        db_ready_event = getattr(self.bot, "db_ready_event", None)
+        if db_ready_event is not None:
+            await db_ready_event.wait()
         await asyncio.sleep(3)
         try:
             await self.initialize_stocks()
             await self.publish_market_update()
         except Exception:
             pass
+
+    @commands.Cog.listener()
+    async def on_ready(self):
+        db_ready_event = getattr(self.bot, "db_ready_event", None)
+        if db_ready_event is not None:
+            await db_ready_event.wait()
+        await self.ensure_runtime_ready()
+
+    async def find_stock_panel_messages(self, channel):
+        panel_messages = []
+        async for message in channel.history(limit=100):
+            if is_stock_news_message(message):
+                panel_messages.append(message)
+        return panel_messages
+
+    async def ensure_news_panel_stack_bottom(self, channel=None, embed=None):
+        async with self.panel_lock:
+            channel = channel or self.bot.get_channel(NEWS_CHANNEL_ID)
+            if channel is None:
+                return
+
+            panel_messages = await self.find_stock_panel_messages(channel)
+            newest_panel = panel_messages[0] if panel_messages else None
+
+            signin_cog = self.bot.get_cog("DailySignin")
+            signin_panel = None
+            if signin_cog is not None:
+                signin_panel = await signin_cog.get_latest_panel_message(channel)
+
+            if embed is None:
+                embed, _ = await build_stock_news_embed()
+
+            if newest_panel is not None:
+                try:
+                    await newest_panel.edit(embed=embed)
+                except discord.NotFound:
+                    newest_panel = None
+
+            ordered_panel = newest_panel
+            should_recreate = (
+                ordered_panel is None
+                or signin_panel is None
+                or ordered_panel.id > signin_panel.id
+            )
+
+            if should_recreate:
+                ordered_panel = await channel.send(embed=embed)
+
+            for message in panel_messages:
+                if ordered_panel is not None and message.id != ordered_panel.id:
+                    try:
+                        await message.delete()
+                    except Exception:
+                        pass
+
+            return ordered_panel
+
+    @commands.Cog.listener()
+    async def on_message(self, message):
+        if message.author.bot:
+            return
+        if message.channel.id != NEWS_CHANNEL_ID:
+            return
+        await self.ensure_news_panel_stack_bottom(channel=message.channel)
 
     async def backfill_registered_role(self, guild: discord.Guild):
         role = guild.get_role(REGISTERED_ROLE_ID)

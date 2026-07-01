@@ -3,7 +3,6 @@ import discord
 from discord.ext import commands
 from app.cogs.gameplay.stock_market import (
     CompensationConfigView,
-    open_compensation_config_panel,
     create_stock_market_dashboard,
 )
 from app.cogs.gameplay.farm import create_farm_dashboard
@@ -15,16 +14,65 @@ from app.db.repositories.user_repo import create_citizen, get_citizen, update_ci
 from app.shared.data.cat_data import generate_cat_identity
 
 REGISTERED_ROLE_ID = 1521848592476668005
+MAGIC_REROLL_COST = 2000
+
+
+async def perform_magic_reroll(user_id: int):
+    user = await get_citizen(user_id)
+    if not user:
+        return False, "no_citizen", None
+
+    current_money = user[4]
+    if current_money < MAGIC_REROLL_COST:
+        return False, "insufficient", current_money
+
+    new_species, new_pattern, _, _is_special = generate_cat_identity()
+    await update_money(user_id, -MAGIC_REROLL_COST)
+    await update_citizen_look(user_id, new_species, new_pattern)
+    return True, user, (new_species, new_pattern)
+
+
+class MagicHouseActionView(discord.ui.View):
+    def __init__(self, user_id):
+        super().__init__(timeout=180)
+        self.user_id = user_id
+
+    @discord.ui.button(label="花费2000洗点", style=discord.ButtonStyle.primary, emoji="🔮")
+    async def reroll_btn(self, button, interaction):
+        if interaction.user.id != self.user_id:
+            return await interaction.response.send_message("这不是你的魔法订单哦！", ephemeral=True)
+
+        success, payload, extra = await perform_magic_reroll(interaction.user.id)
+        if not success:
+            if payload == "no_citizen":
+                return await interaction.response.send_message("你还没有身份！", ephemeral=True)
+            return await interaction.response.send_message(
+                f"🔮 巫师：你的钱不够！重塑灵魂需要 **{MAGIC_REROLL_COST}** 喵币。",
+                ephemeral=True,
+            )
+
+        old_user = payload
+        new_species, new_pattern = extra
+        embed = discord.Embed(title="🔮 魔法生效了！", description="一阵烟雾散去，你看着镜子里的自己...", color=0x9400D3)
+        embed.set_image(url="https://i.postimg.cc/05WHkYNk/magic.png")
+        embed.add_field(name="旧模样", value=f"{old_user[3]} {old_user[2]}", inline=True)
+        embed.add_field(name="➡️", value="变身", inline=True)
+        embed.add_field(name="新模样", value=f"**{new_pattern} {new_species}**", inline=True)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+async def open_magic_house_panel(interaction: discord.Interaction, user_id: int):
+    embed = discord.Embed(title="🔮 神秘魔法屋", color=0x8E44AD)
+    embed.description = "巫师可以帮你重塑品种和花色，但代价不低。"
+    embed.add_field(name="当前服务", value=f"洗点一次需 **{MAGIC_REROLL_COST}** 喵币。", inline=False)
+    embed.add_field(name="效果说明", value="会重新随机你的品种与花色，不影响资金、称号、股票和农场。", inline=False)
+    await interaction.response.send_message(embed=embed, view=MagicHouseActionView(user_id), ephemeral=True)
 
 # --- 档案主视图 ---
 class ProfileView(discord.ui.View):
     def __init__(self, user_id):
         super().__init__(timeout=None)
         self.user_id = user_id
-
-    def _is_owner(self, interaction: discord.Interaction):
-        owner_ids = getattr(interaction.client, "owner_ids", None) or []
-        return interaction.user.id in owner_ids
 
     @discord.ui.button(label="👑 称号", style=discord.ButtonStyle.primary, emoji="🏷️", row=0)
     async def title_callback(self, button, interaction):
@@ -72,13 +120,11 @@ class ProfileView(discord.ui.View):
         embed, view = await create_ranking_dashboard()
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
-    @discord.ui.button(label="补偿公告", style=discord.ButtonStyle.danger, emoji="📣", row=2)
-    async def compensation_callback(self, button, interaction):
+    @discord.ui.button(label="魔法屋", style=discord.ButtonStyle.primary, emoji="🔮", row=2)
+    async def magic_callback(self, button, interaction):
         if interaction.user.id != self.user_id:
             return await interaction.response.send_message("这不是你的档案哦！", ephemeral=True)
-        if not self._is_owner(interaction):
-            return await interaction.response.send_message("🚫 只有管理员可以打开补偿公告配置面板。", ephemeral=True)
-        await open_compensation_config_panel(interaction)
+        await open_magic_house_panel(interaction, self.user_id)
 
 class Cat(commands.Cog):
     def __init__(self, bot):
@@ -145,7 +191,7 @@ class Cat(commands.Cog):
         # --- 修改位置在这里 ---
         # 使用 :.2f 将数字格式化为两位小数
         embed.add_field(name="💰 资产账户", value=f"**{money:.2f}** 喵币", inline=True)
-        embed.add_field(name="🎮 功能入口", value="下方按钮已集成股市、农场、大富翁、排行榜、商店、背包与称号。", inline=False)
+        embed.add_field(name="🎮 功能入口", value="下方按钮已集成股市、农场、大富翁、排行榜、商店、背包、称号与魔法屋。", inline=False)
         
         await ctx.respond(embed=embed, view=ProfileView(ctx.author.id))
 
@@ -195,21 +241,16 @@ class Cat(commands.Cog):
 
     @magic.command(name="洗点", description="花费喵币重塑你的品种和花色")
     async def reroll(self, ctx: discord.ApplicationContext):
-        cost = 2000
-        user = await get_citizen(ctx.author.id)
-        if not user:
+        success, payload, extra = await perform_magic_reroll(ctx.author.id)
+        if not success and payload == "no_citizen":
             await ctx.respond("你还没有身份！", ephemeral=True)
             return
-
-        current_money = user[4]
-        if current_money < cost:
-            # 这里的显示也可以优化
-            await ctx.respond(f"🔮 巫师：你的钱不够！重塑灵魂需要 **{cost}** 喵币。", ephemeral=True)
+        if not success:
+            await ctx.respond(f"🔮 巫师：你的钱不够！重塑灵魂需要 **{MAGIC_REROLL_COST}** 喵币。", ephemeral=True)
             return
 
-        new_species, new_pattern, _, is_special = generate_cat_identity()
-        await update_money(ctx.author.id, -cost)
-        await update_citizen_look(ctx.author.id, new_species, new_pattern)
+        user = payload
+        new_species, new_pattern = extra
 
         embed = discord.Embed(title="🔮 魔法生效了！", description="一阵烟雾散去，你看着镜子里的自己...", color=0x9400D3)
         embed.set_image(url="https://i.postimg.cc/05WHkYNk/magic.png")

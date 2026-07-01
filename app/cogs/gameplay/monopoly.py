@@ -558,6 +558,9 @@ class Monopoly(commands.Cog):
     @property_maintenance_task.before_loop
     async def before_property_maintenance_task(self):
         await self.bot.wait_until_ready()
+        db_ready_event = getattr(self.bot, "db_ready_event", None)
+        if db_ready_event is not None:
+            await db_ready_event.wait()
 
 def setup(bot):
     bot.add_cog(Monopoly(bot))

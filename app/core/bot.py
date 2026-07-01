@@ -1,3 +1,4 @@
+import asyncio
 import logging
 
 import discord
@@ -15,4 +16,6 @@ def setup_logging() -> logging.Logger:
 def create_bot(owner_ids: list[int]) -> discord.Bot:
     intents = discord.Intents.default()
     intents.members = True
-    return discord.Bot(owner_ids=owner_ids, intents=intents)
+    bot = discord.Bot(owner_ids=owner_ids, intents=intents)
+    bot.db_ready_event = asyncio.Event()
+    return bot

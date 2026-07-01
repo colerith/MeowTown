@@ -687,6 +687,9 @@ class Farm(commands.Cog):
     @crop_checker.before_loop
     async def before_checker(self):
         await self.bot.wait_until_ready()
+        db_ready_event = getattr(self.bot, "db_ready_event", None)
+        if db_ready_event is not None:
+            await db_ready_event.wait()
 
 def setup(bot):
     bot.add_cog(Farm(bot))

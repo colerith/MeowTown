@@ -186,11 +186,19 @@ class DailySignin(commands.Cog):
         self.bot = bot
         self.panel_lock = asyncio.Lock()
         self.panel_view = DailySigninView(self)
-        self.bot.add_view(self.panel_view)
-        self.panel_maintainer.start()
+        self.runtime_ready = False
 
     def cog_unload(self):
-        self.panel_maintainer.cancel()
+        if self.panel_maintainer.is_running():
+            self.panel_maintainer.cancel()
+
+    async def ensure_runtime_ready(self):
+        if self.runtime_ready:
+            return
+        self.bot.add_view(self.panel_view)
+        if not self.panel_maintainer.is_running():
+            self.panel_maintainer.start()
+        self.runtime_ready = True
 
     async def find_panel_messages(self, channel):
         panel_messages = []
@@ -237,7 +245,18 @@ class DailySignin(commands.Cog):
     @panel_maintainer.before_loop
     async def before_panel_maintainer(self):
         await self.bot.wait_until_ready()
+        db_ready_event = getattr(self.bot, "db_ready_event", None)
+        if db_ready_event is not None:
+            await db_ready_event.wait()
         await asyncio.sleep(3)
+
+    @commands.Cog.listener()
+    async def on_ready(self):
+        db_ready_event = getattr(self.bot, "db_ready_event", None)
+        if db_ready_event is not None:
+            await db_ready_event.wait()
+        await self.ensure_runtime_ready()
+        await self.ensure_panel_bottom()
 
     @commands.Cog.listener()
     async def on_message(self, message):

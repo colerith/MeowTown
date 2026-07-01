@@ -7,6 +7,12 @@ from app.db.engine import setup_db
 def register_lifecycle_events(bot: discord.Bot, logger, owner_ids: list[int]) -> None:
     @bot.event
     async def on_ready() -> None:
+        if getattr(bot, "db_ready_event", None) and bot.db_ready_event.is_set():
+            activity = discord.Game(name="/帮助 | 喵喵小镇 V1.0")
+            await bot.change_presence(status=discord.Status.online, activity=activity)
+            logger.info("🚀 喵喵小镇机器人已完全就绪，开始提供服务！")
+            return
+
         logger.info("🟢 机器人已成功连接到 Discord 网关！")
         logger.info(f"🤖 当前登录用户: {bot.user} (ID: {bot.user.id})")
         logger.info(f"🌍 加入服务器数: {len(bot.guilds)} 个")
@@ -15,6 +21,8 @@ def register_lifecycle_events(bot: discord.Bot, logger, owner_ids: list[int]) ->
         try:
             logger.info("💾 正在连接数据库...")
             await setup_db()
+            if getattr(bot, "db_ready_event", None):
+                bot.db_ready_event.set()
             logger.info("✅ 数据库连接成功，表结构已更新。")
         except Exception as exc:
             logger.critical(f"🔥 数据库初始化失败: {exc}")
