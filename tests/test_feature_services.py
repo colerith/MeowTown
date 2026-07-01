@@ -4,6 +4,7 @@ from unittest.mock import patch
 from app.features.monopoly import service as monopoly_service
 from app.features.profile import service as profile_service
 from app.features.stock_market import service as stock_service
+from app.cogs.gameplay import daily_signin
 from app.shared.data import stock_data
 
 
@@ -106,3 +107,19 @@ class StockMarketServiceTests(unittest.TestCase):
         new_price, _change_pct = stock_data.calculate_next_price("BOX", 0.01, -3)
 
         self.assertEqual(new_price, stock_data.STOCKS["BOX"]["min_price"])
+
+
+class DailySigninRewardTests(unittest.TestCase):
+    @patch("app.cogs.gameplay.daily_signin.random.randint", return_value=7777777)
+    @patch("app.cogs.gameplay.daily_signin.random.choices")
+    def test_roll_signin_reward_uses_selected_tier_range_and_message(self, mock_choices, _mock_randint):
+        target_tier = daily_signin.SIGNIN_REWARD_TIERS[4]
+        mock_choices.return_value = [target_tier]
+
+        reward, tier = daily_signin.roll_signin_reward()
+
+        self.assertEqual(reward, 7777777)
+        self.assertEqual(tier["key"], "legendary")
+        self.assertLessEqual(tier["min"], reward)
+        self.assertLessEqual(reward, tier["max"])
+        self.assertIn("招财猫", tier["message"])

@@ -26,6 +26,50 @@ SIGNIN_CHANNEL_ID = 1443488941045977140
 CHECKIN_TITLE = "🌞 喵喵镇民每日签到"
 BEIJING_TZ = ZoneInfo("Asia/Shanghai")
 SIGNIN_PANEL_ID = "daily_signin_panel_v1"
+SIGNIN_REWARD_TIERS = [
+    {
+        "key": "common",
+        "weight": 540,
+        "min": 1000,
+        "max": 8888,
+        "message": "🐾 小猫爪在地上拍了拍，今天是轻松顺手的小鱼干收入。",
+    },
+    {
+        "key": "cozy",
+        "weight": 260,
+        "min": 8889,
+        "max": 66666,
+        "message": "😺 软乎乎的猫肚皮翻了出来，今天的签到手感相当不错。",
+    },
+    {
+        "key": "lucky",
+        "weight": 120,
+        "min": 66667,
+        "max": 666666,
+        "message": "✨ 你被幸运喵尾巴轻轻扫了一下，钱包开始发出幸福的叮当声。",
+    },
+    {
+        "key": "rare",
+        "weight": 55,
+        "min": 666667,
+        "max": 6666666,
+        "message": "🌈 一只彩虹喵从云端跳下来，往你怀里塞了一大袋喵币。",
+    },
+    {
+        "key": "legendary",
+        "weight": 20,
+        "min": 6666667,
+        "max": 30000000,
+        "message": "👑 传说中的招财猫朝你眨了眨眼，今天明显是暴富气息。",
+    },
+    {
+        "key": "mythic",
+        "weight": 5,
+        "min": 30000001,
+        "max": 99999999,
+        "message": "🌠 喵喵流星雨正中猫窝，这种级别的巨额签到已经能写进镇史了。",
+    },
+]
 
 
 def get_beijing_now():
@@ -47,6 +91,16 @@ def build_bonus_pool():
     ]
 
 
+def roll_signin_reward():
+    tier = random.choices(
+        SIGNIN_REWARD_TIERS,
+        weights=[tier["weight"] for tier in SIGNIN_REWARD_TIERS],
+        k=1,
+    )[0]
+    reward = random.randint(tier["min"], tier["max"])
+    return reward, tier
+
+
 async def build_checkin_embed():
     today = get_beijing_date_str()
     today_count = await count_daily_signins_by_date(today)
@@ -57,7 +111,11 @@ async def build_checkin_embed():
         "欢迎来到镇民签到站。\n"
         "已注册喵喵每天都可以来签到一次，按 **北京时间** 结算。"
     )
-    embed.add_field(name="基础奖励", value="随机获得 **1000 - 99999999** 喵币。", inline=False)
+    embed.add_field(
+        name="基础奖励",
+        value="采用 **阶梯概率奖池** 发放喵币，金额越高越稀有，范围 **1000 - 99999999**。",
+        inline=False,
+    )
     embed.add_field(
         name="附加惊喜",
         value="偶尔会触发股市、农场、称号联动奖励，例如股票、化肥、种子、护卫、稀有称号等。",
@@ -164,7 +222,7 @@ class DailySigninView(View):
         if row and row[1] == today:
             return await interaction.response.send_message("📌 你今天已经签到过了，明天再来吧。", ephemeral=True)
 
-        base_reward = random.randint(1000, 99999999)
+        base_reward, reward_tier = roll_signin_reward()
         await update_money(interaction.user.id, base_reward)
         await record_daily_signin(interaction.user.id, today, base_reward)
 
@@ -173,7 +231,15 @@ class DailySigninView(View):
             bonus_message = await apply_bonus_event(interaction.user.id)
 
         embed = discord.Embed(title="✅ 签到成功", color=0x2ECC71)
-        embed.description = f"你今天的基础签到奖励是 **{base_reward}** 喵币。"
+        embed.description = (
+            f"你今天的基础签到奖励是 **{base_reward}** 喵币。\n"
+            f"{reward_tier['message']}"
+        )
+        embed.add_field(
+            name="奖励阶梯",
+            value=f"**{reward_tier['key']}** ｜ 区间 `{reward_tier['min']} - {reward_tier['max']}`",
+            inline=False,
+        )
         if bonus_message:
             embed.add_field(name="幸运附加事件", value=bonus_message, inline=False)
         embed.set_footer(text=f"签到日期：{today}（北京时间）")
