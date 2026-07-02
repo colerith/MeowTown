@@ -436,8 +436,20 @@ class WelfareConfigView(View):
 class Welfare(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.claim_view = WelfareClaimView()
+        self.claim_view = None
+        self._view_registered = False
+
+    async def ensure_claim_view_registered(self):
+        if self._view_registered:
+            return
+        if self.claim_view is None:
+            self.claim_view = WelfareClaimView()
         self.bot.add_view(self.claim_view)
+        self._view_registered = True
+
+    @commands.Cog.listener()
+    async def on_ready(self):
+        await self.ensure_claim_view_registered()
 
     @TOWN_GROUP.command(name="福利发放", description="【仅限管理员】发送一条可配置的福利领取公告")
     @commands.is_owner()
@@ -447,6 +459,7 @@ class Welfare(commands.Cog):
         是否艾特镇民: discord.Option(bool, "是否艾特喵喵镇民身份组", default=False),
         目标频道: discord.Option(discord.TextChannel, "要发送到的频道，默认当前频道", required=False, default=None),
     ):
+        await self.ensure_claim_view_registered()
         await ctx.defer(ephemeral=True)
         target_channel = 目标频道 or ctx.channel
         if target_channel is None:
