@@ -500,6 +500,8 @@ class Cat(commands.Cog):
                 view=ProfileRefreshView(interaction.user.id),
                 ephemeral=True,
             )
+        except discord.InteractionResponded:
+            pass
         except discord.HTTPException:
             pass
 

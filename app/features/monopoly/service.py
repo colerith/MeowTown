@@ -12,7 +12,11 @@ def calculate_upgrade_cost(price):
 
 
 def calculate_property_rent(tile, level, effect):
-    return round(tile["rent"][level - 1] * (2 if effect == "roadblock" else 1), 2)
+    rent_tiers = tile.get("rent") or [0]
+    safe_level = max(1, int(level or 1))
+    safe_index = min(safe_level - 1, len(rent_tiers) - 1)
+    multiplier = 2 if effect == "roadblock" else 1
+    return round(rent_tiers[safe_index] * multiplier, 2)
 
 
 def handle_bad_luck_after_event(current_bad_luck, event_is_bad):

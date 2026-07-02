@@ -109,7 +109,7 @@ class UpgradeSelect(Select):
         options = []
         for map_id, level, name, price in properties:
             upgrade_cost = calculate_upgrade_cost(price)
-            rent = get_map_tile(map_id)['rent'][level-1]
+            rent = calculate_property_rent(get_map_tile(map_id), level, None)
             options.append(discord.SelectOption(
                 label=f"{name} (Lv.{level})",
                 description=f"升级: {upgrade_cost:.2f}币 | 当前租金: {rent:.2f}",

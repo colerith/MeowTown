@@ -211,7 +211,9 @@ async def send_welfare_role_notice(bot, claim: dict):
         role_names.append(role.name if role else f"身份组 {role_id}")
 
     user_name = user.display_name if user and hasattr(user, "display_name") else (user.name if user else f"用户 {claim['user_id']}")
-    await channel.send(f"🎁 **{user_name}** 领取福利获得身份组：**{'、'.join(role_names)}**")
+    await channel.send(
+        f"🎁 **{user_name}** (`{claim['user_id']}`) 领取福利获得身份组：**{'、'.join(role_names)}**"
+    )
     return True
 
 
