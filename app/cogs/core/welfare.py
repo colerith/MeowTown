@@ -231,7 +231,7 @@ async def send_welfare_role_notice(bot, claim: dict):
                 f"特殊标记：`{record_key}`",
             ]
         ),
-        allowed_mentions=discord.AllowedMentions(users=True, roles=True),
+        allowed_mentions=discord.AllowedMentions.none(),
     )
     return True
 
