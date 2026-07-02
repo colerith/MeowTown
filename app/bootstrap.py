@@ -17,6 +17,7 @@ def run() -> None:
         sys.exit(1)
 
     bot = create_bot(owner_ids=settings.owner_ids)
+    bot.meowtown_logger = logger
     register_lifecycle_events(bot, logger, settings.owner_ids)
     load_extensions(bot, logger)
 

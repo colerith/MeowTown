@@ -4,6 +4,12 @@ from pathlib import Path
 
 import discord
 
+from app.core.command_sync import (
+    ensure_town_group_pending_synced,
+    summarize_pending_commands,
+    summarize_registered_commands,
+)
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -36,4 +42,10 @@ def load_extensions(bot: discord.Bot, logger) -> None:
             logger.error(f"❌ 加载插件失败: {ext} | 错误: {exc}")
 
     logger.info(f"📦 扫描到的插件总数: {len(extensions)}")
+    ensure_town_group_pending_synced(bot)
+    logger.info("🧾 插件加载后的命令注册快照:")
+    for line in summarize_pending_commands(bot):
+        logger.info(f"   {line}")
+    for line in summarize_registered_commands(bot):
+        logger.info(f"   {line}")
     logger.info("--------------------------------------------------")

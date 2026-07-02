@@ -1,6 +1,7 @@
 import discord
 from discord.ext import commands
 
+from app.core.command_sync import sync_and_log_commands
 from app.db.engine import setup_db
 from app.db.repositories.user_repo import sync_all_citizen_levels
 
@@ -29,6 +30,13 @@ def register_lifecycle_events(bot: discord.Bot, logger, owner_ids: list[int]) ->
             logger.info(f"📊 市民等级同步完成，共处理 {synced_count} 位市民。")
         except Exception as exc:
             logger.critical(f"🔥 数据库初始化失败: {exc}")
+
+        try:
+            async with bot.command_sync_lock:
+                logger.info("🌐 正在执行启动阶段应用命令全局同步...")
+                await sync_and_log_commands(bot, logger, force=True)
+        except Exception as exc:
+            logger.error(f"❌ 启动阶段应用命令同步失败: {exc}", exc_info=True)
 
         activity = discord.Game(name="/帮助 | 喵喵小镇 V1.0")
         await bot.change_presence(status=discord.Status.online, activity=activity)

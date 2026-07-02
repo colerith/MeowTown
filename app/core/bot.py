@@ -18,4 +18,5 @@ def create_bot(owner_ids: list[int]) -> discord.Bot:
     intents.members = True
     bot = discord.Bot(owner_ids=owner_ids, intents=intents)
     bot.db_ready_event = asyncio.Event()
+    bot.command_sync_lock = asyncio.Lock()
     return bot

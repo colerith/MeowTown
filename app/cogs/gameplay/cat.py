@@ -32,18 +32,25 @@ MAGIC_REROLL_COST = 2000
 TOWN_GROUP = discord.SlashCommandGroup("喵喵小镇", "喵喵小镇市民系统")
 
 
+def sync_pending_town_group(bot):
+    for pending_command in getattr(bot, "pending_application_commands", []):
+        if getattr(pending_command, "name", None) != TOWN_GROUP.name:
+            continue
+        pending_command.subcommands = list(TOWN_GROUP.subcommands)
+        for subcommand in pending_command.subcommands:
+            subcommand.parent = pending_command
+        return pending_command
+    return None
+
+
 def register_town_group_command(bot, command):
     existing_names = {subcommand.name for subcommand in TOWN_GROUP.subcommands}
     if command.name not in existing_names:
         TOWN_GROUP.subcommands.append(command)
     command.parent = TOWN_GROUP
 
-    for pending_command in getattr(bot, "pending_application_commands", []):
-        if getattr(pending_command, "name", None) != TOWN_GROUP.name:
-            continue
-        pending_names = {subcommand.name for subcommand in getattr(pending_command, "subcommands", [])}
-        if command.name not in pending_names:
-            pending_command.subcommands.append(command)
+    pending_command = sync_pending_town_group(bot)
+    if pending_command is not None:
         command.parent = pending_command
     return command
 
@@ -493,3 +500,4 @@ class Cat(commands.Cog):
 
 def setup(bot):
     bot.add_cog(Cat(bot))
+    sync_pending_town_group(bot)
