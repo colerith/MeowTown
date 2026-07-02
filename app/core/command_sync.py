@@ -25,6 +25,7 @@ def get_town_group_commands(bot) -> list:
             continue
         command = getattr(cog, command_attr, None)
         if command is not None:
+            command.cog = cog
             commands.append(command)
     return commands
 
