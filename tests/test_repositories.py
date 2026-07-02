@@ -7,6 +7,7 @@ import aiosqlite
 
 from app.db import engine
 from app.db.repositories import (
+    casino_repo,
     daily_repo,
     farm_repo,
     inventory_repo,
@@ -24,6 +25,7 @@ PATCHED_MODULES = [
     daily_repo,
     farm_repo,
     inventory_repo,
+    casino_repo,
     monopoly_repo,
     ranking_repo,
     stock_repo,
@@ -251,6 +253,105 @@ class StockRepositoryTests(RepositoryIntegrationTestCase):
         self.assertTrue(await stock_repo.has_claimed_stock_compensation(2003))
         self.assertFalse(await stock_repo.claim_stock_compensation(2003, ["FISH", "BOX"], 100))
         self.assertEqual(await stock_repo.get_portfolio_positions(2003), [("BOX", 100), ("FISH", 100)])
+
+
+class CasinoRepositoryTests(RepositoryIntegrationTestCase):
+    async def test_casino_repo_bank_and_stats_flow(self):
+        await self.create_user(2051, money=5000, name="Banker")
+
+        await casino_repo.ensure_casino_user(2051)
+        account = await casino_repo.get_bank_account(2051)
+        self.assertEqual(account[1], 0)
+        self.assertEqual(account[2], 0)
+        self.assertEqual(account[4], 5000)
+
+        success, reason, wallet = await casino_repo.deposit_to_account(2051, 1200, "checking")
+        self.assertTrue(success)
+        self.assertEqual(reason, "ok")
+        self.assertEqual(wallet, 5000)
+
+        success, reason, _payload = await casino_repo.deposit_to_account(
+            2051,
+            800,
+            "savings",
+            locked_until=None,
+        )
+        self.assertTrue(success)
+        self.assertEqual(reason, "ok")
+
+        account = await casino_repo.get_bank_account(2051)
+        self.assertEqual(account[1], 1200)
+        self.assertEqual(account[2], 800)
+        self.assertEqual(account[4], 3000)
+
+        success, reason, checking_balance = await casino_repo.withdraw_from_account(2051, 200, "checking")
+        self.assertTrue(success)
+        self.assertEqual(reason, "ok")
+        self.assertEqual(checking_balance, 1200)
+
+        await casino_repo.apply_game_result(2051, 500, win=True)
+        await casino_repo.apply_game_result(2051, -300, loss=True)
+        stats = await casino_repo.get_casino_stats(2051)
+        self.assertEqual(stats[:3], (1, 1, 0))
+        self.assertAlmostEqual(await user_repo.get_user_money(2051), 3400)
+
+    async def test_casino_repo_jail_and_transfer_flow(self):
+        await self.create_user(2052, money=4000, name="Thief")
+        await self.create_user(2053, money=3000, name="Victim")
+
+        sentence_end = await casino_repo.send_user_to_jail(2052, 15)
+        self.assertIsNotNone(sentence_end)
+        self.assertIsNotNone(await casino_repo.get_active_sentence_end(2052))
+
+        success, reason, prior_bribes = await casino_repo.bribe_for_release(2052, 1000, "2026-07-02")
+        self.assertTrue(success)
+        self.assertEqual(reason, "ok")
+        self.assertEqual(prior_bribes, 0)
+        self.assertIsNone(await casino_repo.get_active_sentence_end(2052))
+        self.assertAlmostEqual(await user_repo.get_user_money(2052), 3000)
+
+        await casino_repo.transfer_money_between_users(2053, 2052, 600)
+        self.assertAlmostEqual(await user_repo.get_user_money(2052), 3600)
+        self.assertAlmostEqual(await user_repo.get_user_money(2053), 2400)
+
+        await casino_repo.deposit_to_account(2053, 1000, "checking")
+        await casino_repo.apply_bank_robbery_success(2052, 900)
+        account = await casino_repo.get_bank_account(2053)
+        self.assertEqual(account[1], 980)
+        self.assertEqual(await casino_repo.get_total_bank_pool(), 980)
+
+    async def test_casino_repo_buff_purchase_and_lookup(self):
+        await self.create_user(2054, money=20000, name="BuffCat")
+
+        success, reason, payload = await casino_repo.purchase_buff_item(
+            2054,
+            "初级好运符",
+            2500,
+            "good_luck",
+            1,
+            today="2026-07-02",
+            daily_limit=10,
+        )
+        self.assertTrue(success)
+        self.assertEqual(reason, "ok")
+        self.assertIsNotNone(payload)
+        self.assertAlmostEqual(await user_repo.get_user_money(2054), 17500)
+        self.assertTrue(await casino_repo.has_active_buff(2054, "good_luck"))
+        self.assertGreater(await casino_repo.get_buff_bonus_multiplier(2054), 1.0)
+
+        count, date_str = await casino_repo.get_shop_purchase_state(2054, "初级好运符")
+        self.assertEqual((count, date_str), (1, "2026-07-02"))
+
+        buffs = await casino_repo.get_active_buffs(2054)
+        self.assertEqual(len(buffs), 1)
+        self.assertEqual(buffs[0][0], "good_luck")
+
+    async def test_casino_repo_can_activate_tool_buff(self):
+        await self.create_user(2055, money=5000, name="ToolBuff")
+        expires_at = await casino_repo.activate_or_extend_buff(2055, "casino_focus", 2)
+        self.assertIsNotNone(expires_at)
+        self.assertTrue(await casino_repo.has_active_buff(2055, "casino_focus"))
+        self.assertAlmostEqual(await casino_repo.get_buff_bonus_multiplier(2055), 1.2)
 
 
 class InventoryRepositoryTests(RepositoryIntegrationTestCase):

@@ -1,7 +1,14 @@
+from datetime import datetime
+
 import discord
 from discord.ext import commands
 from discord.ui import Select, View
 
+from app.db.repositories.casino_repo import (
+    activate_or_extend_buff,
+    get_active_buffs,
+    purchase_buff_item,
+)
 from app.db.repositories.farm_repo import accelerate_farm_growth
 from app.db.repositories.inventory_repo import add_item, get_items, use_item_from_db
 from app.db.repositories.monopoly_repo import (
@@ -40,12 +47,15 @@ def build_shop_embed():
     embed = discord.Embed(title="🛍️ 喵喵百货商店", color=0xFF69B4)
     embed.set_image(url=SHOP_IMAGE)
 
-    categories = {"tool": "🛠️ 实用道具", "cosmetic": "👗 精品服饰"}
+    categories = {"tool": "🛠️ 实用道具", "buff": "🎲 娱乐城增益", "cosmetic": "👗 精品服饰"}
     for type_key, type_name in categories.items():
         content = ""
         for item in SHOP_ITEMS.values():
             if item["type"] == type_key:
-                content += f"{item['icon']} **{item['name']}** - `{item['price']} 喵币`\n> *{item['desc']}*\n"
+                limit_text = ""
+                if item["type"] == "buff":
+                    limit_text = f"\n> *每日限购 {item['daily_limit']} 次*"
+                content += f"{item['icon']} **{item['name']}** - `{item['price']} 喵币`\n> *{item['desc']}*{limit_text}\n"
         if content:
             embed.add_field(name=type_name, value=content, inline=False)
 
@@ -99,6 +109,34 @@ class ShopBuySelect(Select):
         if user[4] < item["price"]:
             return await interaction.response.send_message(
                 f"🚫 余额不足！需要 **{item['price']}** 喵币。",
+                ephemeral=True,
+            )
+
+        if item["type"] == "buff":
+            success, reason, payload = await purchase_buff_item(
+                self.user_id,
+                item_name,
+                item["price"],
+                item["buff_type"],
+                item["duration_hours"],
+                today=discord.utils.utcnow().date().isoformat(),
+                daily_limit=item["daily_limit"],
+            )
+            if not success:
+                if reason == "insufficient_wallet":
+                    return await interaction.response.send_message(
+                        f"🚫 余额不足！需要 **{item['price']}** 喵币，你当前只有 **{payload}**。",
+                        ephemeral=True,
+                    )
+                if reason == "daily_limit":
+                    return await interaction.response.send_message(
+                        f"🚫 今天该商品已达到限购，剩余可购次数 **{payload}**。",
+                        ephemeral=True,
+                    )
+                return await interaction.response.send_message("🚫 购买失败，请稍后再试。", ephemeral=True)
+
+            return await interaction.response.send_message(
+                f"✅ 购买成功！**{item['icon']} {item_name}** 已立即生效，持续到 **{payload.strftime('%Y-%m-%d %H:%M')}**。",
                 ephemeral=True,
             )
 
@@ -166,6 +204,13 @@ class BagUseSelect(Select):
                 ephemeral=True,
             )
 
+        if item_name == "筹码校准器":
+            expires_at = await activate_or_extend_buff(self.user_id, "casino_focus", SHOP_ITEMS[item_name]["duration_hours"])
+            return await interaction.response.send_message(
+                f"🎛️ **筹码校准器**已启动！接下来到 **{expires_at.strftime('%Y-%m-%d %H:%M')}** 前，娱乐城获胜奖金额外提高 20%。",
+                ephemeral=True,
+            )
+
         if item_name == "遥控骰子":
             await activate_next_dice_fixed(self.user_id)
             return await interaction.response.send_message(
@@ -204,7 +249,22 @@ class BagView(View):
 
 
 async def open_shop_panel(interaction: discord.Interaction, user_id: int):
-    await interaction.response.send_message(embed=build_shop_embed(), view=ShopView(user_id), ephemeral=True)
+    embed = build_shop_embed()
+    active_buffs = await get_active_buffs(user_id)
+    if active_buffs:
+        lines = []
+        for buff_type, expires_at in active_buffs[:5]:
+            item_name = next(
+                (
+                    name
+                    for name, item in SHOP_ITEMS.items()
+                    if item.get("buff_type") == buff_type or item.get("effect_type") == buff_type
+                ),
+                buff_type,
+            )
+            lines.append(f"• **{item_name}** 持续至 `{expires_at[:16].replace('T', ' ')}`")
+        embed.add_field(name="✨ 当前生效中的增益", value="\n".join(lines), inline=False)
+    await interaction.response.send_message(embed=embed, view=ShopView(user_id), ephemeral=True)
 
 
 async def open_bag_panel(interaction: discord.Interaction, user_id: int):

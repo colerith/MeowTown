@@ -99,6 +99,34 @@ async def setup_db():
 			)
 			"""
 		)
+		await db.execute(
+			"""
+			CREATE TABLE IF NOT EXISTS welfare_messages (
+				message_id INTEGER PRIMARY KEY,
+				channel_id INTEGER NOT NULL,
+				title TEXT NOT NULL,
+				body TEXT NOT NULL,
+				mention_enabled INTEGER DEFAULT 0,
+				mention_content TEXT DEFAULT '',
+				role_rewards_json TEXT DEFAULT '[]',
+				money_reward_json TEXT DEFAULT '{}',
+				stock_rewards_json TEXT DEFAULT '[]',
+				updated_at TEXT NOT NULL
+			)
+			"""
+		)
+		await db.execute(
+			"""
+			CREATE TABLE IF NOT EXISTS welfare_claims (
+				message_id INTEGER NOT NULL,
+				user_id INTEGER NOT NULL,
+				payload_json TEXT DEFAULT '{}',
+				claimed_at TEXT NOT NULL,
+				status TEXT DEFAULT 'claimed',
+				PRIMARY KEY (message_id, user_id)
+			)
+			"""
+		)
 
 		await db.execute(
 			"""
@@ -142,6 +170,57 @@ async def setup_db():
 				title_id TEXT,
 				obtained_at INTEGER,
 				PRIMARY KEY (user_id, title_id)
+			)
+			"""
+		)
+		await db.execute(
+			"""
+			CREATE TABLE IF NOT EXISTS casino_bank_accounts (
+				user_id INTEGER PRIMARY KEY,
+				checking_balance INTEGER DEFAULT 0,
+				savings_balance INTEGER DEFAULT 0,
+				savings_locked_until TEXT
+			)
+			"""
+		)
+		await db.execute(
+			"""
+			CREATE TABLE IF NOT EXISTS casino_jail_records (
+				user_id INTEGER PRIMARY KEY,
+				sentence_ends_at TEXT,
+				bribes_today INTEGER DEFAULT 0,
+				last_bribe_date TEXT
+			)
+			"""
+		)
+		await db.execute(
+			"""
+			CREATE TABLE IF NOT EXISTS casino_game_stats (
+				user_id INTEGER PRIMARY KEY,
+				wins INTEGER DEFAULT 0,
+				losses INTEGER DEFAULT 0,
+				jail_count INTEGER DEFAULT 0
+			)
+			"""
+		)
+		await db.execute(
+			"""
+			CREATE TABLE IF NOT EXISTS casino_buffs (
+				user_id INTEGER NOT NULL,
+				buff_type TEXT NOT NULL,
+				expires_at TEXT NOT NULL,
+				PRIMARY KEY (user_id, buff_type)
+			)
+			"""
+		)
+		await db.execute(
+			"""
+			CREATE TABLE IF NOT EXISTS casino_shop_logs (
+				user_id INTEGER NOT NULL,
+				item_name TEXT NOT NULL,
+				purchase_count INTEGER DEFAULT 0,
+				last_purchase_date TEXT,
+				PRIMARY KEY (user_id, item_name)
 			)
 			"""
 		)

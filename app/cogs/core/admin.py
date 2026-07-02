@@ -5,14 +5,14 @@ import shutil
 import discord
 from discord.ext import commands
 
+from app.cogs.gameplay.cat import TOWN_GROUP
+
 
 class Admin(commands.Cog):
 	def __init__(self, bot):
 		self.bot = bot
 
-	admin = discord.SlashCommandGroup("管理员", "管理员专用指令")
-
-	@admin.command(name="备份数据", description="【仅限管理员】导出当前数据库文件")
+	@TOWN_GROUP.command(name="备份数据", description="【仅限管理员】导出当前数据库文件")
 	@commands.is_owner()
 	async def backup(self, ctx: discord.ApplicationContext):
 		db_source = "./data/meowtown.db"

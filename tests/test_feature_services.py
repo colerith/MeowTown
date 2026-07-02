@@ -2,6 +2,7 @@ import unittest
 from unittest.mock import patch
 
 from app.features.monopoly import service as monopoly_service
+from app.features.casino import service as casino_service
 from app.features.profile import service as profile_service
 from app.features.stock_market import service as stock_service
 from app.cogs.gameplay import daily_signin
@@ -124,3 +125,40 @@ class DailySigninRewardTests(unittest.TestCase):
         self.assertLessEqual(tier["min"], reward)
         self.assertLessEqual(reward, tier["max"])
         self.assertIn("招财猫", tier["message"])
+
+
+class CasinoServiceTests(unittest.TestCase):
+    def test_calculate_rob_success_rate_has_floor(self):
+        self.assertEqual(casino_service.calculate_player_rob_success_rate(5, 5), 0.5)
+        self.assertEqual(casino_service.calculate_player_rob_success_rate(1, 100), 0.1)
+
+    @patch("app.features.casino.service.random.choice", side_effect=["7️⃣", "7️⃣", "7️⃣"])
+    def test_slots_supports_jackpot(self, _mock_choice):
+        reels, payout = casino_service.roll_slots(100)
+        self.assertEqual(reels, ["7️⃣", "7️⃣", "7️⃣"])
+        self.assertEqual(payout, 7700)
+
+    @patch("app.features.casino.service.random.randint", side_effect=[6, 6, 1, 1])
+    def test_roll_dice_battle_returns_two_sides(self, _mock_randint):
+        player_dice, dealer_dice, player_score, dealer_score = casino_service.roll_dice_battle()
+        self.assertEqual(player_dice, [6, 6])
+        self.assertEqual(dealer_dice, [1, 1])
+        self.assertEqual(player_score, 12)
+        self.assertEqual(dealer_score, 2)
+
+    @patch("app.features.casino.service.random.randint", return_value=25)
+    def test_determine_player_robbery_loot_uses_percent_window(self, _mock_randint):
+        self.assertEqual(casino_service.determine_player_robbery_loot(100), 25)
+
+    def test_blackjack_score_handles_aces(self):
+        hand = [{"rank": "A", "suit": "♠️"}, {"rank": "9", "suit": "♥️"}, {"rank": "A", "suit": "♦️"}]
+        self.assertEqual(casino_service.calculate_blackjack_score(hand), 21)
+
+    @patch("app.features.casino.service.random.shuffle")
+    def test_deal_texas_holdem_round_returns_complete_payload(self, _mock_shuffle):
+        round_data = casino_service.deal_texas_holdem_round()
+        self.assertEqual(len(round_data["player_hand"]), 2)
+        self.assertEqual(len(round_data["dealer_hand"]), 2)
+        self.assertEqual(len(round_data["community_cards"]), 5)
+        self.assertIn(round_data["player_name"], casino_service.POKER_HAND_NAMES.values())
+        self.assertIn(round_data["dealer_name"], casino_service.POKER_HAND_NAMES.values())

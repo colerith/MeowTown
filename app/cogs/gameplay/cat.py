@@ -1,6 +1,11 @@
 # cogs/cat.py
 import discord
 from discord.ext import commands
+from datetime import datetime
+
+from app.cogs.gameplay.casino.bank import open_bank_panel
+from app.cogs.gameplay.casino.crime import open_crime_panel
+from app.cogs.gameplay.casino.gambling import open_gambling_panel
 from app.cogs.gameplay.stock_market import (
     CompensationConfigView,
     create_stock_market_dashboard,
@@ -11,7 +16,15 @@ from app.cogs.gameplay.monopoly import create_monopoly_dashboard
 from app.cogs.gameplay.ranking import create_ranking_dashboard
 from app.cogs.gameplay.shop import open_bag_panel, open_shop_panel
 from app.cogs.gameplay.title import open_title_panel
+from app.db.repositories.casino_repo import (
+    ensure_casino_user,
+    get_active_buffs,
+    get_active_sentence_end,
+    get_bank_account,
+    get_casino_stats,
+)
 from app.db.repositories.user_repo import create_citizen, get_citizen, get_citizen_profile_summary, update_citizen_look, update_money
+from app.shared.data.shop_data import SHOP_ITEMS
 from app.shared.data.cat_data import generate_cat_identity
 from app.shared.discord_roles import REGISTERED_ROLE_ID, grant_registered_role
 
@@ -71,6 +84,24 @@ def get_citizen_rank(level):
     if level >= 5:
         return "新晋镇民"
     return "见习住户"
+
+
+def format_buff_lines(active_buffs):
+    if not active_buffs:
+        return "无"
+    lines = []
+    for buff_type, expires_at in active_buffs[:3]:
+        item_name = next(
+            (
+                name
+                for name, item in SHOP_ITEMS.items()
+                if item.get("buff_type") == buff_type or item.get("effect_type") == buff_type
+            ),
+            buff_type,
+        )
+        end_at = datetime.fromisoformat(expires_at)
+        lines.append(f"{item_name} 到 `{end_at.strftime('%m-%d %H:%M')}`")
+    return "\n".join(lines)
 
 
 async def perform_magic_reroll(user_id: int):
@@ -148,6 +179,12 @@ class ProfileView(discord.ui.View):
             return await interaction.response.send_message("这不是你的档案哦！", ephemeral=True)
         await open_shop_panel(interaction, self.user_id)
 
+    @discord.ui.button(label="银行", style=discord.ButtonStyle.success, emoji="🏦", row=0)
+    async def bank_callback(self, button, interaction):
+        if interaction.user.id != self.user_id:
+            return await interaction.response.send_message("这不是你的档案哦！", ephemeral=True)
+        await open_bank_panel(interaction, self.user_id)
+
     @discord.ui.button(label="股市", style=discord.ButtonStyle.primary, emoji="📈", row=1)
     async def stock_callback(self, button, interaction):
         if interaction.user.id != self.user_id:
@@ -169,12 +206,24 @@ class ProfileView(discord.ui.View):
         embed, view = await create_monopoly_dashboard(interaction.user)
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
+    @discord.ui.button(label="娱乐城", style=discord.ButtonStyle.danger, emoji="🎰", row=1)
+    async def gambling_callback(self, button, interaction):
+        if interaction.user.id != self.user_id:
+            return await interaction.response.send_message("这不是你的档案哦！", ephemeral=True)
+        await open_gambling_panel(interaction, self.user_id)
+
     @discord.ui.button(label="排行榜", style=discord.ButtonStyle.secondary, emoji="🏆", row=1)
     async def ranking_callback(self, button, interaction):
         if interaction.user.id != self.user_id:
             return await interaction.response.send_message("这不是你的档案哦！", ephemeral=True)
         embed, view = await create_ranking_dashboard()
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
+    @discord.ui.button(label="犯罪中心", style=discord.ButtonStyle.danger, emoji="🔫", row=2)
+    async def crime_callback(self, button, interaction):
+        if interaction.user.id != self.user_id:
+            return await interaction.response.send_message("这不是你的档案哦！", ephemeral=True)
+        await open_crime_panel(interaction, self.user_id)
 
     @discord.ui.button(label="魔法屋", style=discord.ButtonStyle.primary, emoji="🔮", row=2)
     async def magic_callback(self, button, interaction):
@@ -222,6 +271,7 @@ class Cat(commands.Cog):
         if not summary:
             await ctx.respond("🚫 你还不是小镇居民！请先使用 `/喵喵小镇 注册 [名字]` 登记。", ephemeral=True)
             return
+        await ensure_casino_user(ctx.author.id)
 
         user = summary["citizen"]
         name = user[1]
@@ -247,6 +297,25 @@ class Cat(commands.Cog):
         signin_count = summary["signin_count"]
         stock_share_count = summary["stock_share_count"]
         citizen_rank = get_citizen_rank(citizen_level)
+        bank_account = await get_bank_account(ctx.author.id)
+        casino_stats = await get_casino_stats(ctx.author.id)
+        sentence_end = await get_active_sentence_end(ctx.author.id)
+        active_buffs = await get_active_buffs(ctx.author.id)
+        checking_balance = bank_account[1] if bank_account else 0
+        savings_balance = bank_account[2] if bank_account else 0
+        sentence_text = "自由中"
+        if sentence_end is not None:
+            sentence_text = f"服刑至 {sentence_end.strftime('%m-%d %H:%M')}"
+        casino_lines = (
+            f"赌博战绩：**{casino_stats[0]}胜 / {casino_stats[1]}负**\n"
+            f"累计坐牢：**{casino_stats[2]}** 次\n"
+            f"当前状态：**{sentence_text}**"
+        )
+        bank_lines = (
+            f"活期：**{format_large_number(checking_balance)}**\n"
+            f"定期：**{format_large_number(savings_balance)}**\n"
+            f"总储蓄：**{format_large_number(checking_balance + savings_balance)}**"
+        )
 
         embed = discord.Embed(title="🪪 喵喵镇民档案", color=pick_profile_color(citizen_level))
         embed.set_thumbnail(url=ctx.author.display_avatar.url)
@@ -296,7 +365,10 @@ class Cat(commands.Cog):
             ),
             inline=False,
         )
-        embed.set_footer(text="下方按钮可继续进入股市、农场、大富翁、背包、商店、称号与魔法屋")
+        embed.add_field(name="🏦 银行资产", value=bank_lines, inline=True)
+        embed.add_field(name="🎰 娱乐城 / 犯罪", value=casino_lines, inline=True)
+        embed.add_field(name="✨ 当前增益", value=format_buff_lines(active_buffs), inline=True)
+        embed.set_footer(text="下方按钮可继续进入股市、农场、大富翁、银行、娱乐城、犯罪中心、商店、背包、称号与魔法屋")
 
         await ctx.respond(embed=embed, view=ProfileView(ctx.author.id))
 
@@ -402,31 +474,6 @@ class Cat(commands.Cog):
             f"✅ 已手动重发股市快讯面板到频道 **{SIGNIN_CHANNEL_ID}**。\n消息 ID: `{message.id}`",
             ephemeral=True,
         )
-
-    # --- 魔法屋功能 ---
-    magic = discord.SlashCommandGroup("魔法屋", "神秘魔法屋")
-
-    @magic.command(name="洗点", description="花费喵币重塑你的品种和花色")
-    async def reroll(self, ctx: discord.ApplicationContext):
-        success, payload, extra = await perform_magic_reroll(ctx.author.id)
-        if not success and payload == "no_citizen":
-            await ctx.respond("你还没有身份！", ephemeral=True)
-            return
-        if not success:
-            await ctx.respond(f"🔮 巫师：你的钱不够！重塑灵魂需要 **{MAGIC_REROLL_COST}** 喵币。", ephemeral=True)
-            return
-
-        user = payload
-        new_species, new_pattern = extra
-
-        embed = discord.Embed(title="🔮 魔法生效了！", description="一阵烟雾散去，你看着镜子里的自己...", color=0x9400D3)
-        embed.set_image(url="https://i.postimg.cc/05WHkYNk/magic.png")
-        
-        embed.add_field(name="旧模样", value=f"{user[3]} {user[2]}", inline=True)
-        embed.add_field(name="➡️", value="变身", inline=True)
-        embed.add_field(name="新模样", value=f"**{new_pattern} {new_species}**", inline=True)
-        
-        await ctx.respond(embed=embed)
 
 def setup(bot):
     bot.add_cog(Cat(bot))
