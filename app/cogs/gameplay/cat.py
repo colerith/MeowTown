@@ -1,7 +1,8 @@
-# cogs/cat.py
+from datetime import datetime
+import asyncio
+
 import discord
 from discord.ext import commands
-from datetime import datetime
 
 from app.cogs.gameplay.casino.bank import open_bank_panel
 from app.cogs.gameplay.casino.crime import open_crime_panel
@@ -178,85 +179,306 @@ async def open_magic_house_panel(interaction: discord.Interaction, user_id: int)
     embed.add_field(name="效果说明", value="会重新随机你的品种与花色，不影响资金、称号、股票和农场。", inline=False)
     await interaction.response.send_message(embed=embed, view=MagicHouseActionView(user_id), ephemeral=True)
 
+
+PROFILE_BUTTON_IDS = {
+    "town_profile_title",
+    "town_profile_bag",
+    "town_profile_shop",
+    "town_profile_bank",
+    "town_profile_stock",
+    "town_profile_farm",
+    "town_profile_monopoly",
+    "town_profile_gambling",
+    "town_profile_ranking",
+    "town_profile_crime",
+    "town_profile_magic",
+}
+
+
+async def send_profile_refresh_prompt(
+    interaction: discord.Interaction,
+    *,
+    user_id: int,
+    message: str,
+):
+    await interaction.response.send_message(
+        message,
+        view=ProfileRefreshView(user_id),
+        ephemeral=True,
+    )
+
+
+class ProfileRefreshView(discord.ui.View):
+    def __init__(self, user_id: int):
+        super().__init__(timeout=180)
+        self.user_id = user_id
+
+    @discord.ui.button(
+        label="重新打开我的档案",
+        style=discord.ButtonStyle.primary,
+        emoji="🪪",
+    )
+    async def reopen_profile_btn(self, button, interaction: discord.Interaction):
+        if interaction.user.id != self.user_id:
+            return await interaction.response.send_message("这不是发给你的补救面板哦！", ephemeral=True)
+
+        summary = await get_citizen_profile_summary(self.user_id)
+        if not summary:
+            return await interaction.response.send_message(
+                "🚫 你还不是小镇居民！请先使用 `/喵喵小镇 注册 [名字]` 登记。",
+                ephemeral=True,
+            )
+
+        embed, view = await build_profile_panel(interaction.user, summary)
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
+
+async def build_profile_panel(user: discord.abc.User, summary: dict):
+    await ensure_casino_user(user.id)
+
+    citizen = summary["citizen"]
+    name = citizen[1]
+    species = citizen[2]
+    pattern = citizen[3]
+    money = citizen[4]
+    active_title = citizen[6] if len(citizen) > 6 and citizen[6] else "无名之辈"
+    accessory = citizen[7] if len(citizen) > 7 and citizen[7] else ""
+    citizen_level = summary["level"]
+    level_score = summary["level_score"]
+    progress_in_level = summary["progress_in_level"]
+    progress_needed = summary["progress_needed"]
+    next_threshold = summary["next_threshold"]
+    progress_bar = build_progress_bar(progress_in_level, progress_needed)
+    net_worth = summary["net_worth"]
+    stock_value = summary["stock_value"]
+    loan_amount = summary["loan_amount"]
+    property_count = summary["property_count"]
+    property_levels = summary["property_levels"]
+    farm_plot_count = summary["farm_plot_count"]
+    active_crop_count = summary["active_crop_count"]
+    title_count = summary["title_count"]
+    signin_count = summary["signin_count"]
+    stock_share_count = summary["stock_share_count"]
+    citizen_rank = get_citizen_rank(citizen_level)
+    bank_account = await get_bank_account(user.id)
+    casino_stats = await get_casino_stats(user.id)
+    sentence_end = await get_active_sentence_end(user.id)
+    active_buffs = await get_active_buffs(user.id)
+    checking_balance = bank_account[1] if bank_account else 0
+    savings_balance = bank_account[2] if bank_account else 0
+    sentence_text = "自由中"
+    if sentence_end is not None:
+        sentence_text = f"服刑至 {sentence_end.strftime('%m-%d %H:%M')}"
+    casino_lines = (
+        f"赌博战绩：**{casino_stats[0]}胜 / {casino_stats[1]}负**\n"
+        f"累计坐牢：**{casino_stats[2]}** 次\n"
+        f"当前状态：**{sentence_text}**"
+    )
+    bank_lines = (
+        f"活期：**{format_large_number(checking_balance)}**\n"
+        f"定期：**{format_large_number(savings_balance)}**\n"
+        f"总储蓄：**{format_large_number(checking_balance + savings_balance)}**"
+    )
+
+    embed = discord.Embed(title="🪪 喵喵镇民档案", color=pick_profile_color(citizen_level))
+    embed.set_thumbnail(url=user.display_avatar.url)
+    embed.set_author(name=f"{user.display_name} 的市民面板", icon_url=user.display_avatar.url)
+
+    full_name_display = f"**【{active_title}】** {name} {accessory}"
+    embed.description = (
+        f"{full_name_display}\n"
+        f"**Lv.{citizen_level}** {citizen_rank}  |  品种：**{pattern}{species}**\n"
+        f"`{progress_bar}` **{progress_in_level}/{progress_needed}**\n"
+        f"当前成长值：**{level_score}**  |  下一级门槛：**{next_threshold}**"
+    )
+
+    embed.add_field(
+        name="💰 资产概览",
+        value=(
+            f"现金：**{format_large_number(money)}** 喵币\n"
+            f"股票市值：**{format_large_number(stock_value)}**\n"
+            f"净资产：**{format_large_number(net_worth)}**"
+        ),
+        inline=True,
+    )
+    embed.add_field(
+        name="🏘️ 经营概览",
+        value=(
+            f"地产：**{property_count}** 块\n"
+            f"地产总等级：**{property_levels}**\n"
+            f"农田：**{farm_plot_count}** 块"
+        ),
+        inline=True,
+    )
+    embed.add_field(
+        name="📦 收集概览",
+        value=(
+            f"股票持仓：**{stock_share_count}** 股\n"
+            f"称号收藏：**{title_count}** 个\n"
+            f"累计签到：**{signin_count}** 天"
+        ),
+        inline=True,
+    )
+    embed.add_field(
+        name="🌱 当前状态",
+        value=(
+            f"种植中的作物：**{active_crop_count}** 块地\n"
+            f"当前负债：**{format_large_number(loan_amount)}** 喵币\n"
+            f"佩戴饰品：**{accessory or '暂无'}**"
+        ),
+        inline=False,
+    )
+    embed.add_field(name="🏦 银行资产", value=bank_lines, inline=True)
+    embed.add_field(name="🎰 娱乐城 / 犯罪", value=casino_lines, inline=True)
+    embed.add_field(name="✨ 当前增益", value=format_buff_lines(active_buffs), inline=True)
+    embed.set_footer(text="下方按钮可继续进入股市、农场、大富翁、银行、娱乐城、犯罪中心、商店、背包、称号与魔法屋")
+    return embed, ProfileView(user.id)
+
+
 # --- 档案主视图 ---
 class ProfileView(discord.ui.View):
     def __init__(self, user_id):
         super().__init__(timeout=None)
         self.user_id = user_id
 
-    @discord.ui.button(label="👑 称号", style=discord.ButtonStyle.primary, emoji="🏷️", row=0)
+    @discord.ui.button(label="👑 称号", style=discord.ButtonStyle.primary, emoji="🏷️", row=0, custom_id="town_profile_title")
     async def title_callback(self, button, interaction):
         if interaction.user.id != self.user_id:
-            return await interaction.response.send_message("这不是你的档案哦！", ephemeral=True)
+            return await send_profile_refresh_prompt(
+                interaction,
+                user_id=interaction.user.id,
+                message="这不是你的档案哦！点下面按钮可以快速打开你自己的最新档案。",
+            )
         await open_title_panel(interaction, self.user_id)
 
-    @discord.ui.button(label="🎒 背包", style=discord.ButtonStyle.success, emoji="🎒", row=0)
+    @discord.ui.button(label="🎒 背包", style=discord.ButtonStyle.success, emoji="🎒", row=0, custom_id="town_profile_bag")
     async def bag_callback(self, button, interaction):
         if interaction.user.id != self.user_id:
-            return await interaction.response.send_message("这不是你的档案哦！", ephemeral=True)
+            return await send_profile_refresh_prompt(
+                interaction,
+                user_id=interaction.user.id,
+                message="这不是你的档案哦！点下面按钮可以快速打开你自己的最新档案。",
+            )
         await open_bag_panel(interaction, self.user_id)
 
-    @discord.ui.button(label="商店", style=discord.ButtonStyle.secondary, emoji="🛍️", row=0)
+    @discord.ui.button(label="商店", style=discord.ButtonStyle.secondary, emoji="🛍️", row=0, custom_id="town_profile_shop")
     async def shop_callback(self, button, interaction):
         if interaction.user.id != self.user_id:
-            return await interaction.response.send_message("这不是你的档案哦！", ephemeral=True)
+            return await send_profile_refresh_prompt(
+                interaction,
+                user_id=interaction.user.id,
+                message="这不是你的档案哦！点下面按钮可以快速打开你自己的最新档案。",
+            )
         await open_shop_panel(interaction, self.user_id)
 
-    @discord.ui.button(label="银行", style=discord.ButtonStyle.success, emoji="🏦", row=0)
+    @discord.ui.button(label="银行", style=discord.ButtonStyle.success, emoji="🏦", row=0, custom_id="town_profile_bank")
     async def bank_callback(self, button, interaction):
         if interaction.user.id != self.user_id:
-            return await interaction.response.send_message("这不是你的档案哦！", ephemeral=True)
+            return await send_profile_refresh_prompt(
+                interaction,
+                user_id=interaction.user.id,
+                message="这不是你的档案哦！点下面按钮可以快速打开你自己的最新档案。",
+            )
         await open_bank_panel(interaction, self.user_id)
 
-    @discord.ui.button(label="股市", style=discord.ButtonStyle.primary, emoji="📈", row=1)
+    @discord.ui.button(label="股市", style=discord.ButtonStyle.primary, emoji="📈", row=1, custom_id="town_profile_stock")
     async def stock_callback(self, button, interaction):
         if interaction.user.id != self.user_id:
-            return await interaction.response.send_message("这不是你的档案哦！", ephemeral=True)
+            return await send_profile_refresh_prompt(
+                interaction,
+                user_id=interaction.user.id,
+                message="这不是你的档案哦！点下面按钮可以快速打开你自己的最新档案。",
+            )
         embed, view = await create_stock_market_dashboard()
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
-    @discord.ui.button(label="农场", style=discord.ButtonStyle.success, emoji="🌾", row=1)
+    @discord.ui.button(label="农场", style=discord.ButtonStyle.success, emoji="🌾", row=1, custom_id="town_profile_farm")
     async def farm_callback(self, button, interaction):
         if interaction.user.id != self.user_id:
-            return await interaction.response.send_message("这不是你的档案哦！", ephemeral=True)
+            return await send_profile_refresh_prompt(
+                interaction,
+                user_id=interaction.user.id,
+                message="这不是你的档案哦！点下面按钮可以快速打开你自己的最新档案。",
+            )
         embed, view = await create_farm_dashboard(interaction.user)
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
-    @discord.ui.button(label="大富翁", style=discord.ButtonStyle.primary, emoji="🎲", row=1)
+    @discord.ui.button(label="大富翁", style=discord.ButtonStyle.primary, emoji="🎲", row=1, custom_id="town_profile_monopoly")
     async def monopoly_callback(self, button, interaction):
         if interaction.user.id != self.user_id:
-            return await interaction.response.send_message("这不是你的档案哦！", ephemeral=True)
+            return await send_profile_refresh_prompt(
+                interaction,
+                user_id=interaction.user.id,
+                message="这不是你的档案哦！点下面按钮可以快速打开你自己的最新档案。",
+            )
         embed, view = await create_monopoly_dashboard(interaction.user)
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
-    @discord.ui.button(label="娱乐城", style=discord.ButtonStyle.danger, emoji="🎰", row=1)
+    @discord.ui.button(label="娱乐城", style=discord.ButtonStyle.danger, emoji="🎰", row=1, custom_id="town_profile_gambling")
     async def gambling_callback(self, button, interaction):
         if interaction.user.id != self.user_id:
-            return await interaction.response.send_message("这不是你的档案哦！", ephemeral=True)
+            return await send_profile_refresh_prompt(
+                interaction,
+                user_id=interaction.user.id,
+                message="这不是你的档案哦！点下面按钮可以快速打开你自己的最新档案。",
+            )
         await open_gambling_panel(interaction, self.user_id)
 
-    @discord.ui.button(label="排行榜", style=discord.ButtonStyle.secondary, emoji="🏆", row=1)
+    @discord.ui.button(label="排行榜", style=discord.ButtonStyle.secondary, emoji="🏆", row=1, custom_id="town_profile_ranking")
     async def ranking_callback(self, button, interaction):
         if interaction.user.id != self.user_id:
-            return await interaction.response.send_message("这不是你的档案哦！", ephemeral=True)
+            return await send_profile_refresh_prompt(
+                interaction,
+                user_id=interaction.user.id,
+                message="这不是你的档案哦！点下面按钮可以快速打开你自己的最新档案。",
+            )
         embed, view = await create_ranking_dashboard()
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
-    @discord.ui.button(label="犯罪中心", style=discord.ButtonStyle.danger, emoji="🔫", row=2)
+    @discord.ui.button(label="犯罪中心", style=discord.ButtonStyle.danger, emoji="🔫", row=2, custom_id="town_profile_crime")
     async def crime_callback(self, button, interaction):
         if interaction.user.id != self.user_id:
-            return await interaction.response.send_message("这不是你的档案哦！", ephemeral=True)
+            return await send_profile_refresh_prompt(
+                interaction,
+                user_id=interaction.user.id,
+                message="这不是你的档案哦！点下面按钮可以快速打开你自己的最新档案。",
+            )
         await open_crime_panel(interaction, self.user_id)
 
-    @discord.ui.button(label="魔法屋", style=discord.ButtonStyle.primary, emoji="🔮", row=2)
+    @discord.ui.button(label="魔法屋", style=discord.ButtonStyle.primary, emoji="🔮", row=2, custom_id="town_profile_magic")
     async def magic_callback(self, button, interaction):
         if interaction.user.id != self.user_id:
-            return await interaction.response.send_message("这不是你的档案哦！", ephemeral=True)
+            return await send_profile_refresh_prompt(
+                interaction,
+                user_id=interaction.user.id,
+                message="这不是你的档案哦！点下面按钮可以快速打开你自己的最新档案。",
+            )
         await open_magic_house_panel(interaction, self.user_id)
 
 class Cat(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+
+    @commands.Cog.listener()
+    async def on_interaction(self, interaction: discord.Interaction):
+        if interaction.type != discord.InteractionType.component:
+            return
+        if interaction.custom_id not in PROFILE_BUTTON_IDS:
+            return
+
+        # 正常注册的视图会先处理并完成响应；只有失效按钮才会落到这个兜底。
+        await asyncio.sleep(0.35)
+        if interaction.response.is_done():
+            return
+
+        try:
+            await interaction.response.send_message(
+                "这张档案面板已经过期了，点下面按钮可以快速重新打开你自己的最新档案。",
+                view=ProfileRefreshView(interaction.user.id),
+                ephemeral=True,
+            )
+        except discord.HTTPException:
+            pass
 
     citizen = TOWN_GROUP
 
@@ -294,106 +516,8 @@ class Cat(commands.Cog):
         if not summary:
             await ctx.respond("🚫 你还不是小镇居民！请先使用 `/喵喵小镇 注册 [名字]` 登记。", ephemeral=True)
             return
-        await ensure_casino_user(ctx.author.id)
-
-        user = summary["citizen"]
-        name = user[1]
-        species = user[2]
-        pattern = user[3]
-        money = user[4]
-        active_title = user[6] if len(user) > 6 and user[6] else "无名之辈"
-        accessory = user[7] if len(user) > 7 and user[7] else ""
-        citizen_level = summary["level"]
-        level_score = summary["level_score"]
-        progress_in_level = summary["progress_in_level"]
-        progress_needed = summary["progress_needed"]
-        next_threshold = summary["next_threshold"]
-        progress_bar = build_progress_bar(progress_in_level, progress_needed)
-        net_worth = summary["net_worth"]
-        stock_value = summary["stock_value"]
-        loan_amount = summary["loan_amount"]
-        property_count = summary["property_count"]
-        property_levels = summary["property_levels"]
-        farm_plot_count = summary["farm_plot_count"]
-        active_crop_count = summary["active_crop_count"]
-        title_count = summary["title_count"]
-        signin_count = summary["signin_count"]
-        stock_share_count = summary["stock_share_count"]
-        citizen_rank = get_citizen_rank(citizen_level)
-        bank_account = await get_bank_account(ctx.author.id)
-        casino_stats = await get_casino_stats(ctx.author.id)
-        sentence_end = await get_active_sentence_end(ctx.author.id)
-        active_buffs = await get_active_buffs(ctx.author.id)
-        checking_balance = bank_account[1] if bank_account else 0
-        savings_balance = bank_account[2] if bank_account else 0
-        sentence_text = "自由中"
-        if sentence_end is not None:
-            sentence_text = f"服刑至 {sentence_end.strftime('%m-%d %H:%M')}"
-        casino_lines = (
-            f"赌博战绩：**{casino_stats[0]}胜 / {casino_stats[1]}负**\n"
-            f"累计坐牢：**{casino_stats[2]}** 次\n"
-            f"当前状态：**{sentence_text}**"
-        )
-        bank_lines = (
-            f"活期：**{format_large_number(checking_balance)}**\n"
-            f"定期：**{format_large_number(savings_balance)}**\n"
-            f"总储蓄：**{format_large_number(checking_balance + savings_balance)}**"
-        )
-
-        embed = discord.Embed(title="🪪 喵喵镇民档案", color=pick_profile_color(citizen_level))
-        embed.set_thumbnail(url=ctx.author.display_avatar.url)
-        embed.set_author(name=f"{ctx.author.display_name} 的市民面板", icon_url=ctx.author.display_avatar.url)
-
-        full_name_display = f"**【{active_title}】** {name} {accessory}"
-        embed.description = (
-            f"{full_name_display}\n"
-            f"**Lv.{citizen_level}** {citizen_rank}  |  品种：**{pattern}{species}**\n"
-            f"`{progress_bar}` **{progress_in_level}/{progress_needed}**\n"
-            f"当前成长值：**{level_score}**  |  下一级门槛：**{next_threshold}**"
-        )
-
-        embed.add_field(
-            name="💰 资产概览",
-            value=(
-                f"现金：**{format_large_number(money)}** 喵币\n"
-                f"股票市值：**{format_large_number(stock_value)}**\n"
-                f"净资产：**{format_large_number(net_worth)}**"
-            ),
-            inline=True,
-        )
-        embed.add_field(
-            name="🏘️ 经营概览",
-            value=(
-                f"地产：**{property_count}** 块\n"
-                f"地产总等级：**{property_levels}**\n"
-                f"农田：**{farm_plot_count}** 块"
-            ),
-            inline=True,
-        )
-        embed.add_field(
-            name="📦 收集概览",
-            value=(
-                f"股票持仓：**{stock_share_count}** 股\n"
-                f"称号收藏：**{title_count}** 个\n"
-                f"累计签到：**{signin_count}** 天"
-            ),
-            inline=True,
-        )
-        embed.add_field(
-            name="🌱 当前状态",
-            value=(
-                f"种植中的作物：**{active_crop_count}** 块地\n"
-                f"当前负债：**{format_large_number(loan_amount)}** 喵币\n"
-                f"佩戴饰品：**{accessory or '暂无'}**"
-            ),
-            inline=False,
-        )
-        embed.add_field(name="🏦 银行资产", value=bank_lines, inline=True)
-        embed.add_field(name="🎰 娱乐城 / 犯罪", value=casino_lines, inline=True)
-        embed.add_field(name="✨ 当前增益", value=format_buff_lines(active_buffs), inline=True)
-        embed.set_footer(text="下方按钮可继续进入股市、农场、大富翁、银行、娱乐城、犯罪中心、商店、背包、称号与魔法屋")
-
-        await ctx.respond(embed=embed, view=ProfileView(ctx.author.id))
+        embed, view = await build_profile_panel(ctx.author, summary)
+        await ctx.respond(embed=embed, view=view)
 
     @citizen.command(name="补偿公告配置", description="【仅限管理员】打开股票补偿公告配置面板")
     @commands.is_owner()
