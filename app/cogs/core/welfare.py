@@ -14,6 +14,7 @@ from app.db.repositories.welfare_repo import (
     cancel_welfare_claim,
     count_claimed_welfare_users,
     finish_welfare_claim,
+    get_all_role_notice_claims,
     get_welfare_message,
     get_pending_role_notice_claims,
     has_claimed_welfare,
@@ -24,6 +25,7 @@ from app.shared.data.stock_data import STOCKS
 from app.shared.discord_roles import REGISTERED_ROLE_ID, grant_role_by_id
 
 WELFARE_ROLE_NOTICE_CHANNEL_ID = 1426616953975607476
+WELFARE_ROLE_NOTICE_MARKER = "[WELFARE_ROLE_NOTICE_V2]"
 DEFAULT_WELFARE_TITLE = "🎁 喵喵小镇福利发放"
 DEFAULT_WELFARE_BODY = "镇务处准备了一批新的镇民福利，已注册喵喵可点击下方按钮领取，每人仅限一次。"
 MONEY_TIER_WEIGHTS = [
@@ -219,10 +221,25 @@ async def send_welfare_role_notice(bot, claim: dict):
         role_names.append(role.name if role else f"身份组 {role_id}")
 
     user_name = user.display_name if user and hasattr(user, "display_name") else (user.name if user else f"用户 {claim['user_id']}")
+    record_key = f"WELFARE_ROLE_NOTICE|{claim['message_id']}|{claim['user_id']}|{claim.get('claimed_at', 'unknown')}"
     await channel.send(
-        f"🎁 **{user_name}** (`{claim['user_id']}`) 领取福利获得身份组：**{'、'.join(role_names)}**"
+        "\n".join(
+            [
+                f"{WELFARE_ROLE_NOTICE_MARKER} 福利身份组领取记录",
+                f"领取用户：**{user_name}** (`{claim['user_id']}`)",
+                f"获得身份组：**{'、'.join(role_names)}**",
+                f"特殊标记：`{record_key}`",
+            ]
+        )
     )
     return True
+
+
+def is_welfare_role_notice_message(message: discord.Message, bot_user_id: int | None):
+    if bot_user_id is not None and message.author.id != bot_user_id:
+        return False
+    content = message.content or ""
+    return WELFARE_ROLE_NOTICE_MARKER in content or "领取福利获得身份组" in content or "福利身份组领取记录" in content
 
 
 class WelfareContentModal(Modal):
@@ -610,6 +627,30 @@ class Welfare(commands.Cog):
             if sent:
                 await mark_role_notice_sent(claim["message_id"], claim["user_id"])
 
+    async def rebuild_role_notice_channel(self):
+        channel = self.bot.get_channel(WELFARE_ROLE_NOTICE_CHANNEL_ID)
+        if channel is None:
+            channel = await self.bot.fetch_channel(WELFARE_ROLE_NOTICE_CHANNEL_ID)
+
+        deleted = 0
+        bot_user_id = self.bot.user.id if self.bot.user else None
+        async for message in channel.history(limit=None):
+            if not is_welfare_role_notice_message(message, bot_user_id):
+                continue
+            try:
+                await message.delete()
+                deleted += 1
+            except discord.HTTPException:
+                pass
+
+        claims = await get_all_role_notice_claims()
+        resent = 0
+        for claim in claims:
+            sent = await send_welfare_role_notice(self.bot, claim)
+            if sent:
+                resent += 1
+        return deleted, resent, len(claims)
+
     @commands.Cog.listener()
     async def on_ready(self):
         await self.ensure_claim_view_registered()
@@ -640,7 +681,22 @@ class Welfare(commands.Cog):
         )
         view.panel_message = panel_message
 
+    @TOWN_GROUP.command(name="重建福利播报", description="【仅限管理员】清空福利领取播报并按新格式重发")
+    @commands.is_owner()
+    async def rebuild_welfare_role_notices(self, ctx: discord.ApplicationContext):
+        await ctx.defer(ephemeral=True)
+        try:
+            deleted, resent, total = await self.rebuild_role_notice_channel()
+        except Exception as exc:
+            return await ctx.followup.send(f"🚫 重建福利播报失败：{exc}", ephemeral=True)
+
+        await ctx.followup.send(
+            f"✅ 福利领取播报已重建。\n已清理旧播报：**{deleted}** 条\n数据库内可重发记录：**{total}** 条\n实际重发：**{resent}** 条",
+            ephemeral=True,
+        )
+
 
 def setup(bot):
     register_town_group_command(bot, Welfare.welfare_drop)
+    register_town_group_command(bot, Welfare.rebuild_welfare_role_notices)
     bot.add_cog(Welfare(bot))

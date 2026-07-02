@@ -172,6 +172,34 @@ async def get_pending_role_notice_claims():
         return results
 
 
+async def get_all_role_notice_claims():
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            """
+            SELECT message_id, user_id, payload_json, claimed_at
+            FROM welfare_claims
+            WHERE status = 'claimed'
+            ORDER BY claimed_at ASC
+            """
+        )
+        rows = await cursor.fetchall()
+        results = []
+        for row in rows:
+            payload = json.loads(row[2] or "{}")
+            role_ids = payload.get("roles") or []
+            if not role_ids:
+                continue
+            results.append(
+                {
+                    "message_id": row[0],
+                    "user_id": row[1],
+                    "payload": payload,
+                    "claimed_at": row[3],
+                }
+            )
+        return results
+
+
 async def mark_role_notice_sent(message_id, user_id):
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
@@ -191,6 +219,7 @@ __all__ = [
     "finish_welfare_claim",
     "get_welfare_message",
     "count_claimed_welfare_users",
+    "get_all_role_notice_claims",
     "get_pending_role_notice_claims",
     "has_claimed_welfare",
     "mark_role_notice_sent",
