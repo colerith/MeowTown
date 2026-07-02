@@ -193,6 +193,7 @@ PROFILE_BUTTON_BASE_IDS = {
     "town_profile_ranking",
     "town_profile_crime",
     "town_profile_magic",
+    "town_profile_refresh",
 }
 
 
@@ -458,6 +459,23 @@ class ProfileView(discord.ui.View):
                 message="这不是你的档案哦！点下面按钮可以快速打开你自己的最新档案。",
             )
         await open_magic_house_panel(interaction, self.user_id)
+
+    @discord.ui.button(label="刷新", style=discord.ButtonStyle.secondary, emoji="🔄", row=2, custom_id="town_profile_refresh")
+    async def refresh_callback(self, button, interaction):
+        if interaction.user.id != self.user_id:
+            return await send_profile_refresh_prompt(
+                interaction,
+                user_id=interaction.user.id,
+                message="这不是你的档案哦！点下面按钮可以快速打开你自己的最新档案。",
+            )
+        summary = await get_citizen_profile_summary(self.user_id)
+        if not summary:
+            return await interaction.response.send_message(
+                "🚫 你还不是小镇居民！请先使用 `/喵喵小镇 注册 [名字]` 登记。",
+                ephemeral=True,
+            )
+        embed, view = await build_profile_panel(interaction.user, summary)
+        await interaction.response.edit_message(embed=embed, view=view)
 
 class Cat(commands.Cog):
     def __init__(self, bot):
