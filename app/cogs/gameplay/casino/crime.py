@@ -114,7 +114,7 @@ async def resolve_robbery_against_target(interaction: discord.Interaction, robbe
         return await interaction.response.send_message(embed=embed, ephemeral=True)
 
     wallet_after_attempt, _thief_level = await get_wallet_and_level(robber_id)
-    fine_rate = random.randint(15, 30) / 100
+    fine_rate = random.randint(5, 15) / 100
     fine = int(wallet_after_attempt * fine_rate)
     if fine > 0:
         await update_money(robber_id, -fine)
@@ -209,7 +209,7 @@ class CrimePanelView(discord.ui.View):
             return await interaction.response.send_message(embed=embed, ephemeral=True)
 
         wallet_after_attempt, _thief_level = await get_wallet_and_level(self.user_id)
-        fine_rate = random.randint(15, 30) / 100
+        fine_rate = random.randint(5, 15) / 100
         fine = int(wallet_after_attempt * fine_rate)
         if fine > 0:
             await update_money(self.user_id, -fine)
