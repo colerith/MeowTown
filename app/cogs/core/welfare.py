@@ -215,10 +215,10 @@ async def send_welfare_role_notice(bot, claim: dict):
     if not role_ids:
         return True
 
-    role_names = []
+    role_mentions = []
     for role_id in role_ids:
         role = guild.get_role(int(role_id)) if guild else None
-        role_names.append(role.name if role else f"身份组 {role_id}")
+        role_mentions.append(role.mention if role else f"<@&{role_id}>")
 
     user_name = user.display_name if user and hasattr(user, "display_name") else (user.name if user else f"用户 {claim['user_id']}")
     record_key = f"WELFARE_ROLE_NOTICE|{claim['message_id']}|{claim['user_id']}|{claim.get('claimed_at', 'unknown')}"
@@ -226,11 +226,12 @@ async def send_welfare_role_notice(bot, claim: dict):
         "\n".join(
             [
                 f"{WELFARE_ROLE_NOTICE_MARKER} 福利身份组领取记录",
-                f"领取用户：**{user_name}** (`{claim['user_id']}`)",
-                f"获得身份组：**{'、'.join(role_names)}**",
+                f"领取用户：<@{claim['user_id']}> (`{claim['user_id']}`) / {user_name}",
+                f"获得身份组：{'、'.join(role_mentions)}",
                 f"特殊标记：`{record_key}`",
             ]
-        )
+        ),
+        allowed_mentions=discord.AllowedMentions(users=True, roles=True),
     )
     return True
 

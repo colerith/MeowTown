@@ -17,6 +17,7 @@ def get_town_group_commands(bot) -> list:
         ("General", "help"),
         ("General", "ping"),
         ("Welfare", "welfare_drop"),
+        ("Welfare", "rebuild_welfare_role_notices"),
     ]
     commands: list = []
     for cog_name, command_attr in command_specs:
@@ -28,6 +29,36 @@ def get_town_group_commands(bot) -> list:
             command.cog = cog
             commands.append(command)
     return commands
+
+
+def summarize_town_group_resolution(bot) -> list[str]:
+    command_specs = [
+        ("Cat", "register"),
+        ("Cat", "profile"),
+        ("Cat", "compensation_config"),
+        ("Cat", "reset_stock_market"),
+        ("Cat", "backfill_registered_role"),
+        ("Cat", "send_signin_panel"),
+        ("Cat", "send_stock_panel"),
+        ("Admin", "backup"),
+        ("Announcement", "publish_announcement"),
+        ("General", "help"),
+        ("General", "ping"),
+        ("Welfare", "welfare_drop"),
+        ("Welfare", "rebuild_welfare_role_notices"),
+    ]
+    lines: list[str] = ["喵喵小镇子命令解析结果："]
+    for cog_name, command_attr in command_specs:
+        cog = bot.get_cog(cog_name)
+        if cog is None:
+            lines.append(f"- {cog_name}.{command_attr}: 未加载对应 Cog")
+            continue
+        command = getattr(cog, command_attr, None)
+        if command is None:
+            lines.append(f"- {cog_name}.{command_attr}: Cog 已加载，但未找到命令属性")
+            continue
+        lines.append(f"- {cog_name}.{command_attr}: 已解析为 `{getattr(command, 'name', command_attr)}`")
+    return lines
 
 
 def sanitize_command_options(command) -> None:
@@ -110,6 +141,8 @@ async def sync_and_log_commands(bot, logger, *, force: bool = True) -> None:
     for pending_command in getattr(bot, "pending_application_commands", []) or []:
         sanitize_command_options(pending_command)
     logger.info("🧭 应用命令待同步快照开始")
+    for line in summarize_town_group_resolution(bot):
+        logger.info(f"   {line}")
     for line in summarize_pending_commands(bot):
         logger.info(f"   {line}")
     for line in summarize_registered_commands(bot):
@@ -119,6 +152,8 @@ async def sync_and_log_commands(bot, logger, *, force: bool = True) -> None:
 
     ensure_town_group_pending_synced(bot)
     logger.info("✅ 应用命令同步完成")
+    for line in summarize_town_group_resolution(bot):
+        logger.info(f"   {line}")
     for line in summarize_pending_commands(bot):
         logger.info(f"   {line}")
     for line in summarize_registered_commands(bot):
