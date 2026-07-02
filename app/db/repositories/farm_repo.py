@@ -141,6 +141,38 @@ async def clear_expired_farm_guards(current_time):
         await db.commit()
 
 
+async def record_farm_steal_result(user_id, *, success: bool, income: int = 0):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            """
+            INSERT OR IGNORE INTO farm_theft_stats (
+                user_id, steal_success_count, steal_fail_count, steal_income_total
+            ) VALUES (?, 0, 0, 0)
+            """,
+            (user_id,),
+        )
+        if success:
+            await db.execute(
+                """
+                UPDATE farm_theft_stats
+                SET steal_success_count = steal_success_count + 1,
+                    steal_income_total = steal_income_total + ?
+                WHERE user_id = ?
+                """,
+                (income, user_id),
+            )
+        else:
+            await db.execute(
+                """
+                UPDATE farm_theft_stats
+                SET steal_fail_count = steal_fail_count + 1
+                WHERE user_id = ?
+                """,
+                (user_id,),
+            )
+        await db.commit()
+
+
 __all__ = [
     "accelerate_farm_growth",
     "add_farm_plot",
@@ -154,6 +186,7 @@ __all__ = [
     "mark_farm_guard_notice_sent",
     "mark_farm_notified",
     "plant_seed",
+    "record_farm_steal_result",
     "remove_farm_guard",
     "set_farm_guard",
 ]

@@ -17,6 +17,7 @@ from app.db.repositories.farm_repo import (
     mark_farm_guard_notice_sent,
     mark_farm_notified,
     plant_seed,
+    record_farm_steal_result,
     remove_farm_guard,
     set_farm_guard,
 )
@@ -725,10 +726,12 @@ class FarmDashboardView(View):
             income = int(calculate_harvest(plant_id) * 0.8)
             await clear_plot(target_user_id, target_plot[1])
             await update_money(self.user_id, income)
+            await record_farm_steal_result(self.user_id, success=True, income=income)
             return f"😈 你偷到了 **{target.display_name}** 的 **{plant['name']}**！卖了 **{income}** 喵币。"
 
         fine = 200
         await update_money(self.user_id, -fine)
+        await record_farm_steal_result(self.user_id, success=False)
         return f"🐕 你偷菜失手，被 **{target.display_name}** 抓了个正着！罚款 **{fine}** 喵币。"
 
 

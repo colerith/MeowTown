@@ -237,6 +237,26 @@ async def setup_db():
 			)
 			"""
 		)
+		await db.execute(
+			"""
+			CREATE TABLE IF NOT EXISTS casino_crime_stats (
+				user_id INTEGER PRIMARY KEY,
+				player_rob_success_count INTEGER DEFAULT 0,
+				bank_rob_success_count INTEGER DEFAULT 0,
+				robbery_loot_total INTEGER DEFAULT 0
+			)
+			"""
+		)
+		await db.execute(
+			"""
+			CREATE TABLE IF NOT EXISTS farm_theft_stats (
+				user_id INTEGER PRIMARY KEY,
+				steal_success_count INTEGER DEFAULT 0,
+				steal_fail_count INTEGER DEFAULT 0,
+				steal_income_total INTEGER DEFAULT 0
+			)
+			"""
+		)
 
 		try:
 			await db.execute("ALTER TABLE users ADD COLUMN active_title TEXT")
@@ -319,6 +339,30 @@ async def setup_db():
 			pass
 		try:
 			await db.execute("ALTER TABLE casino_gambling_profiles ADD COLUMN random_max_percent INTEGER DEFAULT 15")
+		except Exception:
+			pass
+		try:
+			await db.execute("ALTER TABLE casino_crime_stats ADD COLUMN player_rob_success_count INTEGER DEFAULT 0")
+		except Exception:
+			pass
+		try:
+			await db.execute("ALTER TABLE casino_crime_stats ADD COLUMN bank_rob_success_count INTEGER DEFAULT 0")
+		except Exception:
+			pass
+		try:
+			await db.execute("ALTER TABLE casino_crime_stats ADD COLUMN robbery_loot_total INTEGER DEFAULT 0")
+		except Exception:
+			pass
+		try:
+			await db.execute("ALTER TABLE farm_theft_stats ADD COLUMN steal_success_count INTEGER DEFAULT 0")
+		except Exception:
+			pass
+		try:
+			await db.execute("ALTER TABLE farm_theft_stats ADD COLUMN steal_fail_count INTEGER DEFAULT 0")
+		except Exception:
+			pass
+		try:
+			await db.execute("ALTER TABLE farm_theft_stats ADD COLUMN steal_income_total INTEGER DEFAULT 0")
 		except Exception:
 			pass
 

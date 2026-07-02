@@ -41,6 +41,14 @@ async def _ensure_casino_rows(db, user_id):
         """,
         (user_id,),
     )
+    await db.execute(
+        """
+        INSERT OR IGNORE INTO casino_crime_stats (
+            user_id, player_rob_success_count, bank_rob_success_count, robbery_loot_total
+        ) VALUES (?, 0, 0, 0)
+        """,
+        (user_id,),
+    )
 
 
 async def ensure_casino_user(user_id):
@@ -356,12 +364,37 @@ async def apply_bank_robbery_success(user_id, loot):
         await db.execute("UPDATE users SET money = money + ? WHERE user_id = ?", (loot, user_id))
         await db.execute(
             """
+            UPDATE casino_crime_stats
+            SET bank_rob_success_count = bank_rob_success_count + 1,
+                robbery_loot_total = robbery_loot_total + ?
+            WHERE user_id = ?
+            """,
+            (loot, user_id),
+        )
+        await db.execute(
+            """
             UPDATE casino_bank_accounts
             SET checking_balance = CASE
                 WHEN checking_balance <= 0 THEN 0
                 ELSE CAST(checking_balance * 0.98 AS INTEGER)
             END
             """
+        )
+        await db.commit()
+
+
+async def record_player_robbery_success(user_id, loot):
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        await _ensure_casino_rows(db, user_id)
+        await db.execute(
+            """
+            UPDATE casino_crime_stats
+            SET player_rob_success_count = player_rob_success_count + 1,
+                robbery_loot_total = robbery_loot_total + ?
+            WHERE user_id = ?
+            """,
+            (loot, user_id),
         )
         await db.commit()
 
@@ -634,6 +667,7 @@ __all__ = [
     "get_wallet_and_level",
     "has_active_buff",
     "purchase_buff_item",
+    "record_player_robbery_success",
     "release_from_jail",
     "send_user_to_jail",
     "transfer_money_between_users",

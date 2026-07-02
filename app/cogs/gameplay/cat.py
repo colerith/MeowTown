@@ -439,7 +439,12 @@ class ProfileView(discord.ui.View):
                 message="这不是你的档案哦！点下面按钮可以快速打开你自己的最新档案。",
             )
         embed, view = await create_ranking_dashboard()
-        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+        await interaction.response.send_message(
+            embed=embed,
+            view=view,
+            ephemeral=True,
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
 
     @discord.ui.button(label="犯罪中心", style=discord.ButtonStyle.danger, emoji="🔫", row=2, custom_id="town_profile_crime")
     async def crime_callback(self, button, interaction):

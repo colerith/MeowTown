@@ -15,6 +15,7 @@ from app.db.repositories.casino_repo import (
     get_total_bank_pool,
     get_wallet_and_level,
     has_active_buff,
+    record_player_robbery_success,
     release_from_jail,
     send_user_to_jail,
     transfer_money_between_users,
@@ -72,6 +73,7 @@ async def resolve_robbery_against_target(interaction: discord.Interaction, robbe
     if random.random() < success_rate:
         loot = casino_service.determine_player_robbery_loot(victim_wallet)
         await transfer_money_between_users(target.id, robber_id, loot)
+        await record_player_robbery_success(robber_id, loot)
         embed = discord.Embed(title="🔫 打劫成功", color=0x2ECC71)
         embed.set_image(url=ROB_IMAGE_URL)
         embed.description = (
