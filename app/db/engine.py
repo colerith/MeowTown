@@ -224,6 +224,18 @@ async def setup_db():
 			)
 			"""
 		)
+		await db.execute(
+			"""
+			CREATE TABLE IF NOT EXISTS casino_gambling_profiles (
+				user_id INTEGER PRIMARY KEY,
+				bet_mode TEXT DEFAULT 'random',
+				custom_bet INTEGER DEFAULT 500,
+				last_bet INTEGER DEFAULT 0,
+				random_min_percent INTEGER DEFAULT 5,
+				random_max_percent INTEGER DEFAULT 15
+			)
+			"""
+		)
 
 		try:
 			await db.execute("ALTER TABLE users ADD COLUMN active_title TEXT")
@@ -282,6 +294,26 @@ async def setup_db():
 			pass
 		try:
 			await db.execute("ALTER TABLE farm_guards ADD COLUMN expired_notice_sent INTEGER DEFAULT 0")
+		except Exception:
+			pass
+		try:
+			await db.execute("ALTER TABLE casino_gambling_profiles ADD COLUMN bet_mode TEXT DEFAULT 'random'")
+		except Exception:
+			pass
+		try:
+			await db.execute("ALTER TABLE casino_gambling_profiles ADD COLUMN custom_bet INTEGER DEFAULT 500")
+		except Exception:
+			pass
+		try:
+			await db.execute("ALTER TABLE casino_gambling_profiles ADD COLUMN last_bet INTEGER DEFAULT 0")
+		except Exception:
+			pass
+		try:
+			await db.execute("ALTER TABLE casino_gambling_profiles ADD COLUMN random_min_percent INTEGER DEFAULT 5")
+		except Exception:
+			pass
+		try:
+			await db.execute("ALTER TABLE casino_gambling_profiles ADD COLUMN random_max_percent INTEGER DEFAULT 15")
 		except Exception:
 			pass
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import random
 
 import discord
 from discord.ext import commands
@@ -10,6 +11,8 @@ from app.db.repositories.casino_repo import (
     ensure_casino_user,
     get_buff_bonus_multiplier,
     get_casino_stats,
+    get_gambling_profile,
+    update_gambling_profile,
 )
 from app.db.repositories.user_repo import get_citizen
 from app.features.casino import service as casino_service
@@ -20,14 +23,69 @@ DICE_IMAGE_URL = "https://i.postimg.cc/J4RhmP0b/dice.png"
 POKER_IMAGE_URL = "https://img.cdn1.vip/i/689ad57b220c6_1754977659.webp"
 ROULETTE_IMAGE_URL = "https://i.postimg.cc/MpDBtZPJ/image.png"
 
+MIN_BET = 100
+DEFAULT_CUSTOM_BET = 500
+DEFAULT_RANDOM_MIN_PERCENT = 5
+DEFAULT_RANDOM_MAX_PERCENT = 15
 
-def get_auto_bet(balance):
-    return min(max(100, int(balance * 0.05)), max(100, int(balance)))
+
+def clamp_bet(balance: int, bet: int) -> int:
+    safe_balance = max(0, int(balance or 0))
+    if safe_balance <= 0:
+        return 0
+    return min(safe_balance, max(MIN_BET, int(bet)))
+
+
+def format_bet_mode(profile: dict) -> str:
+    mode = profile.get("bet_mode", "random")
+    if mode == "custom":
+        return f"自选投入 **{profile['custom_bet']}** 喵币"
+    if mode == "last":
+        return f"延续上次投入 **{profile['last_bet']}** 喵币"
+    return f"随机投入钱包的 **{profile['random_min_percent']}% - {profile['random_max_percent']}%**"
+
+
+def roll_random_bet(balance: int, profile: dict) -> int:
+    min_percent = max(1, int(profile.get("random_min_percent", DEFAULT_RANDOM_MIN_PERCENT)))
+    max_percent = max(min_percent, int(profile.get("random_max_percent", DEFAULT_RANDOM_MAX_PERCENT)))
+    rolled_percent = random.randint(min_percent, max_percent)
+    return clamp_bet(balance, int(balance * rolled_percent / 100))
+
+
+async def resolve_bet_for_user(user_id: int):
+    citizen = await get_citizen(user_id)
+    if not citizen:
+        return None, None, None, "not_citizen"
+
+    balance = int(citizen[4] or 0)
+    profile = await get_gambling_profile(user_id)
+    if profile is None:
+        return citizen, None, None, "profile_missing"
+
+    if balance < MIN_BET:
+        return citizen, profile, None, "balance_too_low"
+
+    mode = profile.get("bet_mode", "random")
+    if mode == "custom":
+        bet = clamp_bet(balance, profile.get("custom_bet", DEFAULT_CUSTOM_BET))
+    elif mode == "last":
+        last_bet = int(profile.get("last_bet") or 0)
+        if last_bet < MIN_BET:
+            return citizen, profile, None, "last_bet_missing"
+        bet = clamp_bet(balance, last_bet)
+    else:
+        bet = roll_random_bet(balance, profile)
+
+    if bet < MIN_BET:
+        return citizen, profile, None, "balance_too_low"
+
+    return citizen, profile, bet, "ok"
 
 
 async def build_gambling_embed(user_id: int, user_name: str):
     await ensure_casino_user(user_id)
     stats = await get_casino_stats(user_id)
+    profile = await get_gambling_profile(user_id)
     wins, losses = stats[0], stats[1]
     total_rounds = wins + losses
     win_rate = (wins / total_rounds * 100) if total_rounds else 0
@@ -46,8 +104,85 @@ async def build_gambling_embed(user_id: int, user_name: str):
         inline=True,
     )
     embed.add_field(name="可玩项目", value="老虎机 / 2d6 / 德州 / 21点 / 俄罗斯轮盘", inline=True)
+    embed.add_field(
+        name="💵 当前下注模式",
+        value=(
+            f"{format_bet_mode(profile)}\n"
+            f"上次实际下注：**{profile['last_bet']}** 喵币"
+        ),
+        inline=False,
+    )
     embed.set_footer(text="按钮版娱乐城已并入市民档案，不再单独走 slash 指令。")
     return embed
+
+
+class CustomBetModal(discord.ui.Modal):
+    def __init__(self, parent_view, current_value: int):
+        super().__init__(title="设置自选投入")
+        self.parent_view = parent_view
+        self.add_item(
+            discord.ui.InputText(
+                label="固定投入金额",
+                value=str(current_value),
+                placeholder="请输入每局要投入的喵币",
+                required=True,
+            )
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        try:
+            amount = casino_service.parse_positive_int(self.children[0].value)
+        except Exception:
+            return await interaction.response.send_message("🚫 请输入大于 0 的整数金额。", ephemeral=True)
+
+        amount = max(MIN_BET, amount)
+        await update_gambling_profile(
+            self.parent_view.user_id,
+            bet_mode="custom",
+            custom_bet=amount,
+        )
+        embed = await build_gambling_embed(self.parent_view.user_id, interaction.user.display_name)
+        await interaction.response.edit_message(embed=embed, view=self.parent_view)
+
+
+class RandomBetSettingsModal(discord.ui.Modal):
+    def __init__(self, parent_view, min_percent: int, max_percent: int):
+        super().__init__(title="设置随机投入范围")
+        self.parent_view = parent_view
+        self.add_item(
+            discord.ui.InputText(
+                label="最小百分比",
+                value=str(min_percent),
+                placeholder="例如 5",
+                required=True,
+            )
+        )
+        self.add_item(
+            discord.ui.InputText(
+                label="最大百分比",
+                value=str(max_percent),
+                placeholder="例如 15",
+                required=True,
+            )
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        try:
+            min_percent = casino_service.parse_positive_int(self.children[0].value)
+            max_percent = casino_service.parse_positive_int(self.children[1].value)
+        except Exception:
+            return await interaction.response.send_message("🚫 百分比必须是正整数。", ephemeral=True)
+
+        min_percent = max(1, min(min_percent, 100))
+        max_percent = max(min_percent, min(max_percent, 100))
+        await update_gambling_profile(
+            self.parent_view.user_id,
+            bet_mode="random",
+            random_min_percent=min_percent,
+            random_max_percent=max_percent,
+        )
+        embed = await build_gambling_embed(self.parent_view.user_id, interaction.user.display_name)
+        await interaction.response.edit_message(embed=embed, view=self.parent_view)
 
 
 class RussianRouletteView(discord.ui.View):
@@ -198,24 +333,35 @@ class GamblingPanelView(discord.ui.View):
         return True
 
     async def _get_balance_and_bet(self):
-        citizen = await get_citizen(self.user_id)
-        if not citizen:
-            return None, None
-        bet = get_auto_bet(int(citizen[4] or 0))
-        return citizen, bet
+        return await resolve_bet_for_user(self.user_id)
+
+    async def _prepare_bet(self, interaction: discord.Interaction):
+        citizen, profile, bet, status = await self._get_balance_and_bet()
+        if status == "not_citizen":
+            await interaction.response.send_message("🚫 你还不是小镇居民。", ephemeral=True)
+            return None, None, None
+        if status == "last_bet_missing":
+            await interaction.response.send_message("🚫 你还没有上一次下注记录，请先切到自选投入或随机投入。", ephemeral=True)
+            return None, None, None
+        if status != "ok":
+            await interaction.response.send_message("🚫 钱包太瘪了，至少要有 100 喵币才能开局。", ephemeral=True)
+            return None, None, None
+        if int(citizen[4] or 0) < bet:
+            await interaction.response.send_message("🚫 当前钱包金额不足以完成这次下注。", ephemeral=True)
+            return None, None, None
+        return citizen, profile, bet
 
     @discord.ui.button(label="老虎机", style=discord.ButtonStyle.primary, emoji="🎰", row=0)
     async def slots_btn(self, button, interaction):
-        citizen, bet = await self._get_balance_and_bet()
-        if not citizen:
-            return await interaction.response.send_message("🚫 你还不是小镇居民。", ephemeral=True)
-        if citizen[4] < bet:
-            return await interaction.response.send_message("🚫 钱包太瘪了，至少要有 100 喵币才能开机。", ephemeral=True)
+        citizen, _profile, bet = await self._prepare_bet(interaction)
+        if citizen is None:
+            return
 
         reels, payout = casino_service.roll_slots(bet)
+        await update_gambling_profile(self.user_id, last_bet=bet)
         embed = discord.Embed(title="🎰 老虎机", color=0xF39C12)
         embed.set_image(url=SLOT_IMAGE_URL)
-        embed.add_field(name="自动下注", value=f"**{bet}** 喵币", inline=True)
+        embed.add_field(name="本轮投入", value=f"**{bet}** 喵币", inline=True)
         embed.add_field(name="结果", value=f"**[ {' | '.join(reels)} ]**", inline=False)
 
         if payout > 0:
@@ -232,16 +378,15 @@ class GamblingPanelView(discord.ui.View):
 
     @discord.ui.button(label="骰子对赌", style=discord.ButtonStyle.success, emoji="🎲", row=0)
     async def dice_btn(self, button, interaction):
-        citizen, bet = await self._get_balance_and_bet()
-        if not citizen:
-            return await interaction.response.send_message("🚫 你还不是小镇居民。", ephemeral=True)
-        if citizen[4] < bet:
-            return await interaction.response.send_message("🚫 钱包太瘪了，至少要有 100 喵币才能开局。", ephemeral=True)
+        citizen, _profile, bet = await self._prepare_bet(interaction)
+        if citizen is None:
+            return
 
         player_dice, dealer_dice, player_score, dealer_score = casino_service.roll_dice_battle()
+        await update_gambling_profile(self.user_id, last_bet=bet)
         embed = discord.Embed(title="🎲 2d6 比大小", color=0x3498DB)
         embed.set_image(url=DICE_IMAGE_URL)
-        embed.add_field(name="自动下注", value=f"**{bet}** 喵币", inline=True)
+        embed.add_field(name="本轮投入", value=f"**{bet}** 喵币", inline=True)
         embed.add_field(name="你的点数", value=f"{player_dice[0]} + {player_dice[1]} = **{player_score}**", inline=False)
         embed.add_field(name="庄家点数", value=f"{dealer_dice[0]} + {dealer_dice[1]} = **{dealer_score}**", inline=False)
 
@@ -260,16 +405,15 @@ class GamblingPanelView(discord.ui.View):
 
     @discord.ui.button(label="德州扑克", style=discord.ButtonStyle.primary, emoji="🃏", row=0)
     async def poker_btn(self, button, interaction):
-        citizen, bet = await self._get_balance_and_bet()
-        if not citizen:
-            return await interaction.response.send_message("🚫 你还不是小镇居民。", ephemeral=True)
-        if citizen[4] < bet:
-            return await interaction.response.send_message("🚫 钱包太瘪了，至少要有 100 喵币才能开局。", ephemeral=True)
+        citizen, _profile, bet = await self._prepare_bet(interaction)
+        if citizen is None:
+            return
 
         round_data = casino_service.deal_texas_holdem_round()
+        await update_gambling_profile(self.user_id, last_bet=bet)
         embed = discord.Embed(title="🃏 德州扑克", color=discord.Color.dark_red())
         embed.set_image(url=POKER_IMAGE_URL)
-        embed.add_field(name="自动下注", value=f"**{bet}** 喵币", inline=True)
+        embed.add_field(name="本轮投入", value=f"**{bet}** 喵币", inline=True)
         embed.add_field(name="公共牌", value=casino_service.format_cards(round_data["community_cards"]), inline=False)
         embed.add_field(name=f"你的手牌 ({round_data['player_name']})", value=casino_service.format_cards(round_data["player_hand"]), inline=True)
         embed.add_field(name=f"庄家手牌 ({round_data['dealer_name']})", value=casino_service.format_cards(round_data["dealer_hand"]), inline=True)
@@ -292,25 +436,56 @@ class GamblingPanelView(discord.ui.View):
 
     @discord.ui.button(label="21点", style=discord.ButtonStyle.success, emoji="🃏", row=1)
     async def blackjack_btn(self, button, interaction):
-        citizen, bet = await self._get_balance_and_bet()
-        if not citizen:
-            return await interaction.response.send_message("🚫 你还不是小镇居民。", ephemeral=True)
-        if citizen[4] < bet:
-            return await interaction.response.send_message("🚫 钱包太瘪了，至少要有 100 喵币才能开局。", ephemeral=True)
+        citizen, _profile, bet = await self._prepare_bet(interaction)
+        if citizen is None:
+            return
 
+        await update_gambling_profile(self.user_id, last_bet=bet)
         view = BlackJackView(self.user_id, bet)
         await interaction.response.send_message(embed=view._embed(), view=view, ephemeral=True)
 
     @discord.ui.button(label="俄罗斯轮盘", style=discord.ButtonStyle.danger, emoji="🔫", row=1)
     async def roulette_btn(self, button, interaction):
-        citizen, bet = await self._get_balance_and_bet()
-        if not citizen:
-            return await interaction.response.send_message("🚫 你还不是小镇居民。", ephemeral=True)
-        if citizen[4] < bet:
-            return await interaction.response.send_message("🚫 钱包太瘪了，至少要有 100 喵币才能上桌。", ephemeral=True)
+        citizen, _profile, bet = await self._prepare_bet(interaction)
+        if citizen is None:
+            return
 
+        await update_gambling_profile(self.user_id, last_bet=bet)
         view = RussianRouletteView(self.user_id, bet)
         await interaction.response.send_message(embed=view.create_embed(), view=view, ephemeral=True)
+
+    @discord.ui.button(label="自选投入", style=discord.ButtonStyle.primary, emoji="💵", row=2)
+    async def custom_bet_btn(self, button, interaction):
+        profile = await get_gambling_profile(self.user_id)
+        await interaction.response.send_modal(
+            CustomBetModal(self, profile["custom_bet"] if profile else DEFAULT_CUSTOM_BET)
+        )
+
+    @discord.ui.button(label="延续上次", style=discord.ButtonStyle.secondary, emoji="♻️", row=2)
+    async def last_bet_btn(self, button, interaction):
+        profile = await get_gambling_profile(self.user_id)
+        if not profile or int(profile.get("last_bet") or 0) < MIN_BET:
+            return await interaction.response.send_message("🚫 你还没有可延续的上次下注记录。", ephemeral=True)
+        await update_gambling_profile(self.user_id, bet_mode="last")
+        embed = await build_gambling_embed(self.user_id, interaction.user.display_name)
+        await interaction.response.edit_message(embed=embed, view=self)
+
+    @discord.ui.button(label="随机投入", style=discord.ButtonStyle.success, emoji="🎲", row=2)
+    async def random_bet_btn(self, button, interaction):
+        await update_gambling_profile(self.user_id, bet_mode="random")
+        embed = await build_gambling_embed(self.user_id, interaction.user.display_name)
+        await interaction.response.edit_message(embed=embed, view=self)
+
+    @discord.ui.button(label="随机设置", style=discord.ButtonStyle.secondary, emoji="⚙️", row=3)
+    async def random_settings_btn(self, button, interaction):
+        profile = await get_gambling_profile(self.user_id)
+        await interaction.response.send_modal(
+            RandomBetSettingsModal(
+                self,
+                profile["random_min_percent"] if profile else DEFAULT_RANDOM_MIN_PERCENT,
+                profile["random_max_percent"] if profile else DEFAULT_RANDOM_MAX_PERCENT,
+            )
+        )
 
     @discord.ui.button(label="刷新战绩", style=discord.ButtonStyle.secondary, emoji="🔄", row=1)
     async def refresh_btn(self, button, interaction):

@@ -33,6 +33,14 @@ async def _ensure_casino_rows(db, user_id):
         """,
         (user_id,),
     )
+    await db.execute(
+        """
+        INSERT OR IGNORE INTO casino_gambling_profiles (
+            user_id, bet_mode, custom_bet, last_bet, random_min_percent, random_max_percent
+        ) VALUES (?, 'random', 500, 0, 5, 15)
+        """,
+        (user_id,),
+    )
 
 
 async def ensure_casino_user(user_id):
@@ -438,6 +446,71 @@ async def get_shop_purchase_state(user_id, item_name):
         return int(row["purchase_count"] or 0), row["last_purchase_date"]
 
 
+async def get_gambling_profile(user_id):
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        await _ensure_casino_rows(db, user_id)
+        await db.commit()
+        cursor = await db.execute(
+            """
+            SELECT bet_mode, custom_bet, last_bet, random_min_percent, random_max_percent
+            FROM casino_gambling_profiles
+            WHERE user_id = ?
+            """,
+            (user_id,),
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            return None
+        return {
+            "bet_mode": row["bet_mode"] or "random",
+            "custom_bet": int(row["custom_bet"] or 500),
+            "last_bet": int(row["last_bet"] or 0),
+            "random_min_percent": int(row["random_min_percent"] or 5),
+            "random_max_percent": int(row["random_max_percent"] or 15),
+        }
+
+
+async def update_gambling_profile(
+    user_id,
+    *,
+    bet_mode=None,
+    custom_bet=None,
+    last_bet=None,
+    random_min_percent=None,
+    random_max_percent=None,
+):
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        await _ensure_casino_rows(db, user_id)
+
+        fields = []
+        values = []
+        if bet_mode is not None:
+            fields.append("bet_mode = ?")
+            values.append(bet_mode)
+        if custom_bet is not None:
+            fields.append("custom_bet = ?")
+            values.append(custom_bet)
+        if last_bet is not None:
+            fields.append("last_bet = ?")
+            values.append(last_bet)
+        if random_min_percent is not None:
+            fields.append("random_min_percent = ?")
+            values.append(random_min_percent)
+        if random_max_percent is not None:
+            fields.append("random_max_percent = ?")
+            values.append(random_max_percent)
+
+        if fields:
+            values.append(user_id)
+            await db.execute(
+                f"UPDATE casino_gambling_profiles SET {', '.join(fields)} WHERE user_id = ?",
+                values,
+            )
+        await db.commit()
+
+
 async def purchase_buff_item(user_id, item_name, price, buff_type, duration_hours, today, daily_limit):
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
@@ -555,6 +628,7 @@ __all__ = [
     "get_bank_leaderboard",
     "get_buff_bonus_multiplier",
     "get_casino_stats",
+    "get_gambling_profile",
     "get_shop_purchase_state",
     "get_total_bank_pool",
     "get_wallet_and_level",
@@ -563,5 +637,6 @@ __all__ = [
     "release_from_jail",
     "send_user_to_jail",
     "transfer_money_between_users",
+    "update_gambling_profile",
     "withdraw_from_account",
 ]
