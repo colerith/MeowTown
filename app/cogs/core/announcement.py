@@ -59,9 +59,10 @@ class AnnouncementMentionModal(Modal):
 
 
 class AnnouncementEditorView(View):
-    def __init__(self, target_message, title, body, mention_enabled, mention_content):
+    def __init__(self, target_channel, title, body, mention_enabled, mention_content):
         super().__init__(timeout=1800)
-        self.target_message = target_message
+        self.target_channel = target_channel
+        self.target_message = None
         self.title = title
         self.body = body
         self.mention_enabled = mention_enabled
@@ -90,6 +91,31 @@ class AnnouncementEditorView(View):
             except discord.HTTPException:
                 pass
 
+    async def publish_announcement(self, interaction: discord.Interaction):
+        if self.target_channel is None:
+            return await interaction.response.send_message("🚫 未找到可发送公告的目标频道。", ephemeral=True)
+
+        content = self.mention_content if self.mention_enabled else None
+        embed = build_announcement_embed(
+            self.title,
+            self.body,
+            editor_name=interaction.user.display_name,
+        )
+        if self.target_message is None:
+            self.target_message = await self.target_channel.send(
+                content=content,
+                embed=embed,
+                allowed_mentions=discord.AllowedMentions(everyone=True, roles=True, users=True),
+            )
+            await interaction.response.send_message(
+                f"✅ 正式公告已发布到 {self.target_channel.mention}。",
+                ephemeral=True,
+            )
+            return
+
+        await self.sync_announcement(interaction)
+        await interaction.response.send_message("✅ 已同步到正式公告消息。", ephemeral=True)
+
     @discord.ui.button(label="编辑标题内容", style=discord.ButtonStyle.primary, emoji="📝", row=0)
     async def edit_content_btn(self, button, interaction):
         await interaction.response.send_modal(AnnouncementContentModal(self))
@@ -97,21 +123,25 @@ class AnnouncementEditorView(View):
     @discord.ui.button(label="切换艾特", style=discord.ButtonStyle.secondary, emoji="📣", row=0)
     async def toggle_mention_btn(self, button, interaction):
         self.mention_enabled = not self.mention_enabled
-        await self.sync_announcement(interaction)
         await interaction.response.edit_message(embed=self.build_panel_embed(), view=self)
 
     @discord.ui.button(label="编辑艾特内容", style=discord.ButtonStyle.secondary, emoji="✏️", row=0)
     async def edit_mention_btn(self, button, interaction):
         await interaction.response.send_modal(AnnouncementMentionModal(self))
 
-    @discord.ui.button(label="同步到公告", style=discord.ButtonStyle.success, emoji="✅", row=1)
-    async def sync_btn(self, button, interaction):
-        await self.sync_announcement(interaction)
-        await interaction.response.send_message("✅ 已重新同步到公告消息。", ephemeral=True)
+    @discord.ui.button(label="确认发布", style=discord.ButtonStyle.success, emoji="✅", row=1)
+    async def publish_btn(self, button, interaction):
+        await self.publish_announcement(interaction)
 
     @discord.ui.button(label="查看当前预览", style=discord.ButtonStyle.secondary, emoji="👀", row=1)
     async def preview_btn(self, button, interaction):
-        await interaction.response.send_message(embed=self.build_panel_embed(), ephemeral=True)
+        content = self.mention_content if self.mention_enabled else None
+        await interaction.response.send_message(
+            content=content,
+            embed=build_announcement_embed(self.title, self.body),
+            ephemeral=True,
+            allowed_mentions=discord.AllowedMentions(everyone=True, roles=True, users=True),
+        )
 
 
 class Announcement(commands.Cog):
@@ -131,23 +161,16 @@ class Announcement(commands.Cog):
         title = DEFAULT_ANNOUNCEMENT_TITLE
         body = DEFAULT_ANNOUNCEMENT_BODY
         final_mention_content = (mention_content or "@everyone").strip()
-        content = final_mention_content if mention_enabled else None
-
-        target_message = await target_channel.send(
-            content=content,
-            embed=build_announcement_embed(title, body, editor_name=ctx.author.display_name),
-            allowed_mentions=discord.AllowedMentions(everyone=True, roles=True, users=True),
-        )
 
         view = AnnouncementEditorView(
-            target_message=target_message,
+            target_channel=target_channel,
             title=title,
             body=body,
             mention_enabled=mention_enabled,
             mention_content=final_mention_content,
         )
         await ctx.followup.send(
-            f"✅ 公告已发送到 {target_channel.mention}。\n现在可以继续在下方面板里编辑标题、内容和艾特设置。",
+            f"✅ 已打开公告配置面板，目标频道为 {target_channel.mention}。\n先在这里调整内容，可点击预览，确认无误后再发布正式公告。",
             embed=view.build_panel_embed(),
             view=view,
             ephemeral=True,

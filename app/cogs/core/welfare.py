@@ -196,7 +196,6 @@ class WelfareContentModal(Modal):
     async def callback(self, interaction: discord.Interaction):
         self.parent_view.config.title = self.children[0].value.strip() or self.parent_view.config.title
         self.parent_view.config.body = self.children[1].value.strip() or self.parent_view.config.body
-        await self.parent_view.sync_message(interaction)
         await interaction.response.send_message("✅ 福利公告标题与内容已更新。", ephemeral=True)
 
 
@@ -221,7 +220,6 @@ class WelfareRoleModal(Modal):
             self.parent_view.config.role_rewards = parse_role_rewards(self.children[0].value)
         except Exception as exc:
             return await interaction.response.send_message(f"🚫 身份组配置格式错误：{exc}", ephemeral=True)
-        await self.parent_view.sync_message(interaction)
         await interaction.response.send_message("✅ 身份组抽选配置已更新。", ephemeral=True)
 
 
@@ -252,7 +250,6 @@ class WelfareMoneyModal(Modal):
             self.parent_view.config.money_reward = parse_money_reward(self.children[0].value, self.children[1].value)
         except Exception as exc:
             return await interaction.response.send_message(f"🚫 喵币配置格式错误：{exc}", ephemeral=True)
-        await self.parent_view.sync_message(interaction)
         await interaction.response.send_message("✅ 喵币福利配置已更新。", ephemeral=True)
 
 
@@ -277,7 +274,6 @@ class WelfareStockModal(Modal):
             self.parent_view.config.stock_rewards = parse_stock_rewards(self.children[0].value)
         except Exception as exc:
             return await interaction.response.send_message(f"🚫 股份配置格式错误：{exc}", ephemeral=True)
-        await self.parent_view.sync_message(interaction)
         await interaction.response.send_message("✅ 股份福利配置已更新。", ephemeral=True)
 
 
@@ -362,18 +358,22 @@ class WelfareClaimView(View):
 
 
 class WelfareConfigView(View):
-    def __init__(self, target_message: discord.Message, config: WelfareConfig):
+    def __init__(self, target_channel: discord.abc.Messageable, config: WelfareConfig):
         super().__init__(timeout=1800)
-        self.target_message = target_message
+        self.target_channel = target_channel
+        self.target_message = None
         self.config = config
 
     def build_panel_embed(self):
-        embed = build_welfare_embed(self.config, self.target_message.guild if self.target_message else None)
+        guild = self.target_message.guild if self.target_message else getattr(self.target_channel, "guild", None)
+        embed = build_welfare_embed(self.config, guild)
         mention_status = "开启" if self.config.mention_registered_role else "关闭"
         embed.add_field(name="📣 发布设置", value=f"艾特喵喵镇民：**{mention_status}**", inline=False)
         return embed
 
     async def sync_message(self, interaction: discord.Interaction | None = None):
+        if self.target_message is None:
+            return
         content = None
         if self.config.mention_registered_role:
             role = self.target_message.guild.get_role(REGISTERED_ROLE_ID) if self.target_message.guild else None
@@ -401,6 +401,36 @@ class WelfareConfigView(View):
             stock_rewards=self.config.stock_rewards,
         )
 
+    async def publish_message(self, interaction: discord.Interaction):
+        content = None
+        guild = getattr(self.target_channel, "guild", None)
+        if self.config.mention_registered_role:
+            role = guild.get_role(REGISTERED_ROLE_ID) if guild else None
+            if role is not None:
+                content = role.mention
+
+        if self.target_message is None:
+            self.target_message = await self.target_channel.send(
+                content=content,
+                embed=build_welfare_embed(self.config, guild, editor_name=interaction.user.display_name),
+                view=WelfareClaimView(),
+                allowed_mentions=discord.AllowedMentions(roles=True),
+            )
+        else:
+            await self.sync_message(interaction)
+
+        await upsert_welfare_message(
+            message_id=self.target_message.id,
+            channel_id=self.target_message.channel.id,
+            title=self.config.title,
+            body=self.config.body,
+            mention_enabled=self.config.mention_registered_role,
+            mention_content=content or "",
+            role_rewards=self.config.role_rewards,
+            money_reward=self.config.money_reward,
+            stock_rewards=self.config.stock_rewards,
+        )
+
     @discord.ui.button(label="编辑标题内容", style=discord.ButtonStyle.primary, emoji="📝", row=0)
     async def edit_content_btn(self, button, interaction):
         await interaction.response.send_modal(WelfareContentModal(self))
@@ -408,7 +438,6 @@ class WelfareConfigView(View):
     @discord.ui.button(label="切换艾特镇民", style=discord.ButtonStyle.secondary, emoji="📣", row=0)
     async def toggle_mention_btn(self, button, interaction):
         self.config.mention_registered_role = not self.config.mention_registered_role
-        await self.sync_message(interaction)
         await interaction.response.edit_message(embed=self.build_panel_embed(), view=self)
 
     @discord.ui.button(label="身份组抽选", style=discord.ButtonStyle.primary, emoji="🎭", row=1)
@@ -425,12 +454,28 @@ class WelfareConfigView(View):
 
     @discord.ui.button(label="查看预览", style=discord.ButtonStyle.secondary, emoji="👀", row=2)
     async def preview_btn(self, button, interaction):
-        await interaction.response.send_message(embed=build_welfare_embed(self.config, interaction.guild), ephemeral=True)
+        content = None
+        if self.config.mention_registered_role:
+            role = interaction.guild.get_role(REGISTERED_ROLE_ID) if interaction.guild else None
+            if role is not None:
+                content = role.mention
+        await interaction.response.send_message(
+            content=content,
+            embed=build_welfare_embed(self.config, interaction.guild),
+            view=WelfareClaimView(),
+            ephemeral=True,
+            allowed_mentions=discord.AllowedMentions(roles=True),
+        )
 
-    @discord.ui.button(label="同步到福利消息", style=discord.ButtonStyle.success, emoji="✅", row=2)
-    async def sync_btn(self, button, interaction):
-        await self.sync_message(interaction)
-        await interaction.response.send_message("✅ 福利消息已同步更新。", ephemeral=True)
+    @discord.ui.button(label="确认发布", style=discord.ButtonStyle.success, emoji="✅", row=2)
+    async def publish_btn(self, button, interaction):
+        await self.publish_message(interaction)
+        if self.target_message is None:
+            return
+        await interaction.response.send_message(
+            f"✅ 福利正式面板已发布到 {self.target_channel.mention}。",
+            ephemeral=True,
+        )
 
 
 class Welfare(commands.Cog):
@@ -466,33 +511,9 @@ class Welfare(commands.Cog):
             return await ctx.followup.send("🚫 未找到可发送福利的目标频道。", ephemeral=True)
 
         config = WelfareConfig(mention_registered_role=是否艾特镇民)
-        content = None
-        if 是否艾特镇民:
-            role = ctx.guild.get_role(REGISTERED_ROLE_ID) if ctx.guild else None
-            if role is not None:
-                content = role.mention
-
-        target_message = await target_channel.send(
-            content=content,
-            embed=build_welfare_embed(config, ctx.guild, editor_name=ctx.author.display_name),
-            view=WelfareClaimView(),
-            allowed_mentions=discord.AllowedMentions(roles=True),
-        )
-        await upsert_welfare_message(
-            message_id=target_message.id,
-            channel_id=target_message.channel.id,
-            title=config.title,
-            body=config.body,
-            mention_enabled=config.mention_registered_role,
-            mention_content=content or "",
-            role_rewards=config.role_rewards,
-            money_reward=config.money_reward,
-            stock_rewards=config.stock_rewards,
-        )
-
-        view = WelfareConfigView(target_message, config)
+        view = WelfareConfigView(target_channel, config)
         await ctx.followup.send(
-            f"✅ 福利公告已发送到 {target_channel.mention}。\n现在可以继续配置身份组抽选、喵币发放和股份福利。",
+            f"✅ 已打开福利配置面板，目标频道为 {target_channel.mention}。\n先在这里配置并预览，确认无误后再发布正式福利面板。",
             embed=view.build_panel_embed(),
             view=view,
             ephemeral=True,
