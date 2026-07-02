@@ -196,6 +196,7 @@ class WelfareContentModal(Modal):
     async def callback(self, interaction: discord.Interaction):
         self.parent_view.config.title = self.children[0].value.strip() or self.parent_view.config.title
         self.parent_view.config.body = self.children[1].value.strip() or self.parent_view.config.body
+        await self.parent_view.refresh_panel_message()
         await interaction.response.send_message("✅ 福利公告标题与内容已更新。", ephemeral=True)
 
 
@@ -220,6 +221,7 @@ class WelfareRoleModal(Modal):
             self.parent_view.config.role_rewards = parse_role_rewards(self.children[0].value)
         except Exception as exc:
             return await interaction.response.send_message(f"🚫 身份组配置格式错误：{exc}", ephemeral=True)
+        await self.parent_view.refresh_panel_message()
         await interaction.response.send_message("✅ 身份组抽选配置已更新。", ephemeral=True)
 
 
@@ -250,6 +252,7 @@ class WelfareMoneyModal(Modal):
             self.parent_view.config.money_reward = parse_money_reward(self.children[0].value, self.children[1].value)
         except Exception as exc:
             return await interaction.response.send_message(f"🚫 喵币配置格式错误：{exc}", ephemeral=True)
+        await self.parent_view.refresh_panel_message()
         await interaction.response.send_message("✅ 喵币福利配置已更新。", ephemeral=True)
 
 
@@ -274,6 +277,7 @@ class WelfareStockModal(Modal):
             self.parent_view.config.stock_rewards = parse_stock_rewards(self.children[0].value)
         except Exception as exc:
             return await interaction.response.send_message(f"🚫 股份配置格式错误：{exc}", ephemeral=True)
+        await self.parent_view.refresh_panel_message()
         await interaction.response.send_message("✅ 股份福利配置已更新。", ephemeral=True)
 
 
@@ -362,6 +366,7 @@ class WelfareConfigView(View):
         super().__init__(timeout=1800)
         self.target_channel = target_channel
         self.target_message = None
+        self.panel_message = None
         self.config = config
 
     def build_panel_embed(self):
@@ -369,7 +374,20 @@ class WelfareConfigView(View):
         embed = build_welfare_embed(self.config, guild)
         mention_status = "开启" if self.config.mention_registered_role else "关闭"
         embed.add_field(name="📣 发布设置", value=f"艾特喵喵镇民：**{mention_status}**", inline=False)
+        embed.add_field(
+            name="正式发布状态",
+            value="已发布，可继续同步更新" if self.target_message else "未发布，确认后才会发送到频道",
+            inline=False,
+        )
         return embed
+
+    async def refresh_panel_message(self):
+        if self.panel_message is None:
+            return
+        try:
+            await self.panel_message.edit(embed=self.build_panel_embed(), view=self)
+        except discord.HTTPException:
+            pass
 
     async def sync_message(self, interaction: discord.Interaction | None = None):
         if self.target_message is None:
@@ -400,6 +418,7 @@ class WelfareConfigView(View):
             money_reward=self.config.money_reward,
             stock_rewards=self.config.stock_rewards,
         )
+        await self.refresh_panel_message()
 
     async def publish_message(self, interaction: discord.Interaction):
         content = None
@@ -430,6 +449,7 @@ class WelfareConfigView(View):
             money_reward=self.config.money_reward,
             stock_rewards=self.config.stock_rewards,
         )
+        await self.refresh_panel_message()
 
     @discord.ui.button(label="编辑标题内容", style=discord.ButtonStyle.primary, emoji="📝", row=0)
     async def edit_content_btn(self, button, interaction):
@@ -512,12 +532,14 @@ class Welfare(commands.Cog):
 
         config = WelfareConfig(mention_registered_role=是否艾特镇民)
         view = WelfareConfigView(target_channel, config)
-        await ctx.followup.send(
+        panel_message = await ctx.followup.send(
             f"✅ 已打开福利配置面板，目标频道为 {target_channel.mention}。\n先在这里配置并预览，确认无误后再发布正式福利面板。",
             embed=view.build_panel_embed(),
             view=view,
             ephemeral=True,
+            wait=True,
         )
+        view.panel_message = panel_message
 
 
 def setup(bot):

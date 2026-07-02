@@ -36,6 +36,7 @@ class AnnouncementContentModal(Modal):
         self.parent_view.title = self.children[0].value.strip() or self.parent_view.title
         self.parent_view.body = self.children[1].value.strip() or self.parent_view.body
         await self.parent_view.sync_announcement(interaction)
+        await self.parent_view.refresh_panel_message()
         await interaction.response.send_message("✅ 公告标题和内容已更新。", ephemeral=True)
 
 
@@ -55,6 +56,7 @@ class AnnouncementMentionModal(Modal):
     async def callback(self, interaction: discord.Interaction):
         self.parent_view.mention_content = self.children[0].value.strip()
         await self.parent_view.sync_announcement(interaction)
+        await self.parent_view.refresh_panel_message()
         await interaction.response.send_message("✅ 艾特内容已更新。", ephemeral=True)
 
 
@@ -63,6 +65,7 @@ class AnnouncementEditorView(View):
         super().__init__(timeout=1800)
         self.target_channel = target_channel
         self.target_message = None
+        self.panel_message = None
         self.title = title
         self.body = body
         self.mention_enabled = mention_enabled
@@ -73,7 +76,20 @@ class AnnouncementEditorView(View):
         embed = build_announcement_embed(self.title, self.body)
         embed.add_field(name="发布设置", value=f"艾特：**{mention_status}**", inline=True)
         embed.add_field(name="艾特内容", value=self.mention_content if self.mention_enabled else "未启用", inline=False)
+        embed.add_field(
+            name="正式发布状态",
+            value="已发布，可继续同步更新" if self.target_message else "未发布，确认后才会发送到频道",
+            inline=False,
+        )
         return embed
+
+    async def refresh_panel_message(self):
+        if self.panel_message is None:
+            return
+        try:
+            await self.panel_message.edit(embed=self.build_panel_embed(), view=self)
+        except discord.HTTPException:
+            pass
 
     async def sync_announcement(self, interaction=None):
         content = self.mention_content if self.mention_enabled else None
@@ -90,6 +106,7 @@ class AnnouncementEditorView(View):
                 )
             except discord.HTTPException:
                 pass
+        await self.refresh_panel_message()
 
     async def publish_announcement(self, interaction: discord.Interaction):
         if self.target_channel is None:
@@ -169,12 +186,14 @@ class Announcement(commands.Cog):
             mention_enabled=mention_enabled,
             mention_content=final_mention_content,
         )
-        await ctx.followup.send(
+        panel_message = await ctx.followup.send(
             f"✅ 已打开公告配置面板，目标频道为 {target_channel.mention}。\n先在这里调整内容，可点击预览，确认无误后再发布正式公告。",
             embed=view.build_panel_embed(),
             view=view,
             ephemeral=True,
+            wait=True,
         )
+        view.panel_message = panel_message
 
     @TOWN_GROUP.command(name="发布公告", description="【仅限管理员】发布一条可继续编辑的公告")
     @commands.is_owner()

@@ -181,7 +181,7 @@ async def open_magic_house_panel(interaction: discord.Interaction, user_id: int)
     await interaction.response.send_message(embed=embed, view=MagicHouseActionView(user_id), ephemeral=True)
 
 
-PROFILE_BUTTON_IDS = {
+PROFILE_BUTTON_BASE_IDS = {
     "town_profile_title",
     "town_profile_bag",
     "town_profile_shop",
@@ -339,8 +339,11 @@ async def build_profile_panel(user: discord.abc.User, summary: dict):
 # --- 档案主视图 ---
 class ProfileView(discord.ui.View):
     def __init__(self, user_id):
-        super().__init__(timeout=None)
+        super().__init__(timeout=1800)
         self.user_id = user_id
+        for child in self.children:
+            if getattr(child, "custom_id", None) in PROFILE_BUTTON_BASE_IDS:
+                child.custom_id = f"{child.custom_id}:{user_id}"
 
     @discord.ui.button(label="👑 称号", style=discord.ButtonStyle.primary, emoji="🏷️", row=0, custom_id="town_profile_title")
     async def title_callback(self, button, interaction):
@@ -464,7 +467,8 @@ class Cat(commands.Cog):
     async def on_interaction(self, interaction: discord.Interaction):
         if interaction.type != discord.InteractionType.component:
             return
-        if interaction.custom_id not in PROFILE_BUTTON_IDS:
+        custom_id = interaction.custom_id or ""
+        if not any(custom_id.startswith(f"{base_id}:") for base_id in PROFILE_BUTTON_BASE_IDS):
             return
 
         # 正常注册的视图会先处理并完成响应；只有失效按钮才会落到这个兜底。
