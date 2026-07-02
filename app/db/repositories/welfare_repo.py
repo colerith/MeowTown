@@ -107,7 +107,7 @@ async def finish_welfare_claim(message_id, user_id, payload):
         await db.execute(
             """
             UPDATE welfare_claims
-            SET payload_json = ?, status = 'claimed'
+            SET payload_json = ?, status = 'claimed', role_notice_sent = 0
             WHERE message_id = ? AND user_id = ?
             """,
             (json.dumps(payload, ensure_ascii=False), message_id, user_id),
@@ -134,11 +134,54 @@ async def has_claimed_welfare(message_id, user_id):
         return row[0] if row else None
 
 
+async def get_pending_role_notice_claims():
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            """
+            SELECT message_id, user_id, payload_json, claimed_at
+            FROM welfare_claims
+            WHERE status = 'claimed' AND role_notice_sent = 0
+            ORDER BY claimed_at ASC
+            """
+        )
+        rows = await cursor.fetchall()
+        results = []
+        for row in rows:
+            payload = json.loads(row[2] or "{}")
+            role_ids = payload.get("roles") or []
+            if not role_ids:
+                continue
+            results.append(
+                {
+                    "message_id": row[0],
+                    "user_id": row[1],
+                    "payload": payload,
+                    "claimed_at": row[3],
+                }
+            )
+        return results
+
+
+async def mark_role_notice_sent(message_id, user_id):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            """
+            UPDATE welfare_claims
+            SET role_notice_sent = 1
+            WHERE message_id = ? AND user_id = ?
+            """,
+            (message_id, user_id),
+        )
+        await db.commit()
+
+
 __all__ = [
     "begin_welfare_claim",
     "cancel_welfare_claim",
     "finish_welfare_claim",
     "get_welfare_message",
+    "get_pending_role_notice_claims",
     "has_claimed_welfare",
+    "mark_role_notice_sent",
     "upsert_welfare_message",
 ]

@@ -123,6 +123,7 @@ async def setup_db():
 				payload_json TEXT DEFAULT '{}',
 				claimed_at TEXT NOT NULL,
 				status TEXT DEFAULT 'claimed',
+				role_notice_sent INTEGER DEFAULT 0,
 				PRIMARY KEY (message_id, user_id)
 			)
 			"""
@@ -294,6 +295,10 @@ async def setup_db():
 			pass
 		try:
 			await db.execute("ALTER TABLE farm_guards ADD COLUMN expired_notice_sent INTEGER DEFAULT 0")
+		except Exception:
+			pass
+		try:
+			await db.execute("ALTER TABLE welfare_claims ADD COLUMN role_notice_sent INTEGER DEFAULT 0")
 		except Exception:
 			pass
 		try:

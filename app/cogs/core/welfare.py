@@ -14,12 +14,15 @@ from app.db.repositories.welfare_repo import (
     cancel_welfare_claim,
     finish_welfare_claim,
     get_welfare_message,
+    get_pending_role_notice_claims,
     has_claimed_welfare,
+    mark_role_notice_sent,
     upsert_welfare_message,
 )
 from app.shared.data.stock_data import STOCKS
 from app.shared.discord_roles import REGISTERED_ROLE_ID, grant_role_by_id
 
+WELFARE_ROLE_NOTICE_CHANNEL_ID = 1426616953975607476
 DEFAULT_WELFARE_TITLE = "🎁 喵喵小镇福利发放"
 DEFAULT_WELFARE_BODY = "镇务处准备了一批新的镇民福利，已注册喵喵可点击下方按钮领取，每人仅限一次。"
 MONEY_TIER_WEIGHTS = [
@@ -177,6 +180,39 @@ def roll_money_reward(config: dict):
     start = max(min_amount, min(start, max_amount))
     end = max(start, min(end, max_amount))
     return random.randint(start, end), tier_label
+
+
+async def send_welfare_role_notice(bot, claim: dict):
+    channel = bot.get_channel(WELFARE_ROLE_NOTICE_CHANNEL_ID)
+    if channel is None:
+        try:
+            channel = await bot.fetch_channel(WELFARE_ROLE_NOTICE_CHANNEL_ID)
+        except Exception:
+            return False
+
+    guild = getattr(channel, "guild", None)
+    user = guild.get_member(claim["user_id"]) if guild else None
+    if user is None:
+        user = bot.get_user(claim["user_id"])
+    if user is None:
+        try:
+            user = await bot.fetch_user(claim["user_id"])
+        except Exception:
+            user = None
+
+    payload = claim["payload"]
+    role_ids = payload.get("roles") or []
+    if not role_ids:
+        return True
+
+    role_names = []
+    for role_id in role_ids:
+        role = guild.get_role(int(role_id)) if guild else None
+        role_names.append(role.name if role else f"身份组 {role_id}")
+
+    user_name = user.display_name if user and hasattr(user, "display_name") else (user.name if user else f"用户 {claim['user_id']}")
+    await channel.send(f"🎁 **{user_name}** 领取福利获得身份组：**{'、'.join(role_names)}**")
+    return True
 
 
 class WelfareContentModal(Modal):
@@ -358,6 +394,19 @@ class WelfareClaimView(View):
             await cancel_welfare_claim(message.id, interaction.user.id)
             return await interaction.response.send_message(f"🚫 福利发放失败：{exc}", ephemeral=True)
 
+        welfare_cog = interaction.client.get_cog("Welfare")
+        if welfare_cog is not None and payload["roles"]:
+            sent = await send_welfare_role_notice(
+                interaction.client,
+                {
+                    "message_id": message.id,
+                    "user_id": interaction.user.id,
+                    "payload": payload,
+                },
+            )
+            if sent:
+                await mark_role_notice_sent(message.id, interaction.user.id)
+
         await interaction.response.send_message("✅ 福利领取成功！\n" + "\n".join(reward_lines), ephemeral=True)
 
 
@@ -512,9 +561,17 @@ class Welfare(commands.Cog):
         self.bot.add_view(self.claim_view)
         self._view_registered = True
 
+    async def backfill_role_notices(self):
+        claims = await get_pending_role_notice_claims()
+        for claim in claims:
+            sent = await send_welfare_role_notice(self.bot, claim)
+            if sent:
+                await mark_role_notice_sent(claim["message_id"], claim["user_id"])
+
     @commands.Cog.listener()
     async def on_ready(self):
         await self.ensure_claim_view_registered()
+        await self.backfill_role_notices()
 
     @TOWN_GROUP.command(name="福利发放", description="【仅限管理员】发送一条可配置的福利领取公告")
     @commands.is_owner()
