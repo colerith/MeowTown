@@ -8,10 +8,13 @@ from discord.ext import commands
 from app.db.repositories.casino_repo import (
     apply_bank_robbery_success,
     bribe_for_release,
+    consume_daily_guard_duel_attempt,
+    consume_daily_robbery_attempt,
     ensure_casino_user,
     extend_jail_sentence,
     get_active_sentence_end,
     get_casino_stats,
+    get_daily_crime_counters,
     get_total_bank_pool,
     get_wallet_and_level,
     has_active_buff,
@@ -20,7 +23,7 @@ from app.db.repositories.casino_repo import (
     send_user_to_jail,
     transfer_money_between_users,
 )
-from app.db.repositories.user_repo import get_citizen
+from app.db.repositories.user_repo import get_citizen, update_money
 from app.features.casino import service as casino_service
 
 
@@ -32,7 +35,10 @@ BANK_VAULT_BASE = 10_000_000_000
 async def build_crime_embed(user_id: int, user_name: str):
     await ensure_casino_user(user_id)
     sentence_end = await get_active_sentence_end(user_id)
-    jail_count = (await get_casino_stats(user_id))[2]
+    stats = await get_casino_stats(user_id)
+    jail_count = stats[2]
+    today = casino_service.get_beijing_today()
+    robberies_today, robbery_successes_today, guard_duels_today = await get_daily_crime_counters(user_id, today)
 
     embed = discord.Embed(title="🔫 犯罪中心", color=0xC0392B)
     embed.set_thumbnail(url=ROB_IMAGE_URL if sentence_end is None else JAIL_IMAGE_URL)
@@ -43,6 +49,15 @@ async def build_crime_embed(user_id: int, user_name: str):
         embed.description = f"🚨 你当前正在服刑，剩余约 **{remain}** 分钟。可以尝试贿赂或对决守卫。"
     embed.add_field(name="累计入狱次数", value=f"**{jail_count}**", inline=True)
     embed.add_field(name="银行大劫案成功率", value=f"**{casino_service.BANK_ROB_SUCCESS_RATE * 100:.0f}%**", inline=True)
+    embed.add_field(
+        name="今日作案额度",
+        value=(
+            f"打劫剩余：**{max(0, min(casino_service.MAX_ROBBERIES_PER_DAY - robberies_today, casino_service.MAX_ROBBERY_SUCCESSES_PER_DAY - robbery_successes_today))}** "
+            f"(尝试 {robberies_today}/{casino_service.MAX_ROBBERIES_PER_DAY}，成功 {robbery_successes_today}/{casino_service.MAX_ROBBERY_SUCCESSES_PER_DAY})\n"
+            f"对决剩余：**{max(0, casino_service.MAX_GUARD_DUELS_PER_DAY - guard_duels_today)} / {casino_service.MAX_GUARD_DUELS_PER_DAY}**"
+        ),
+        inline=False,
+    )
     return embed
 
 
@@ -61,10 +76,26 @@ async def resolve_robbery_against_target(interaction: discord.Interaction, robbe
         remain = casino_service.format_remaining_minutes(current_sentence)
         return await interaction.response.send_message(f"🚨 你还在坐牢，剩余约 **{remain}** 分钟。", ephemeral=True)
 
+    today = casino_service.get_beijing_today()
+    robberies_today, robbery_successes_today, _guard_duels_today = await get_daily_crime_counters(robber_id, today)
+    if (
+        robberies_today >= casino_service.MAX_ROBBERIES_PER_DAY
+        or robbery_successes_today >= casino_service.MAX_ROBBERY_SUCCESSES_PER_DAY
+    ):
+        return await interaction.response.send_message(
+            (
+                "🚫 你今天的打劫额度已经用完了。"
+                f"尝试上限 **{casino_service.MAX_ROBBERIES_PER_DAY}** 次，"
+                f"成功上限 **{casino_service.MAX_ROBBERY_SUCCESSES_PER_DAY}** 次。"
+            ),
+            ephemeral=True,
+        )
+
     _thief_wallet, thief_level = await get_wallet_and_level(robber_id)
     victim_wallet, victim_level = await get_wallet_and_level(target.id)
     if victim_wallet <= 0:
         return await interaction.response.send_message(f"💨 **{target.display_name}** 身上没有可抢的喵币。", ephemeral=True)
+    await consume_daily_robbery_attempt(robber_id, today)
 
     success_rate = casino_service.calculate_player_rob_success_rate(thief_level, victim_level)
     if await has_active_buff(target.id, "rob_protection"):
@@ -73,7 +104,7 @@ async def resolve_robbery_against_target(interaction: discord.Interaction, robbe
     if random.random() < success_rate:
         loot = casino_service.determine_player_robbery_loot(victim_wallet)
         await transfer_money_between_users(target.id, robber_id, loot)
-        await record_player_robbery_success(robber_id, loot)
+        await record_player_robbery_success(robber_id, loot, today=today)
         embed = discord.Embed(title="🔫 打劫成功", color=0x2ECC71)
         embed.set_image(url=ROB_IMAGE_URL)
         embed.description = (
@@ -82,10 +113,18 @@ async def resolve_robbery_against_target(interaction: discord.Interaction, robbe
         )
         return await interaction.response.send_message(embed=embed, ephemeral=True)
 
+    wallet_after_attempt, _thief_level = await get_wallet_and_level(robber_id)
+    fine_rate = random.randint(15, 30) / 100
+    fine = int(wallet_after_attempt * fine_rate)
+    if fine > 0:
+        await update_money(robber_id, -fine)
     await send_user_to_jail(robber_id, casino_service.JAIL_MINUTES_ON_FAILED_ROB)
     embed = discord.Embed(title="👮 打劫失败", color=0xE74C3C)
     embed.set_image(url=JAIL_IMAGE_URL)
-    embed.description = f"你被 **{target.display_name}** 当场反制，入狱 **{casino_service.JAIL_MINUTES_ON_FAILED_ROB}** 分钟。"
+    embed.description = (
+        f"你被 **{target.display_name}** 当场反制，入狱 **{casino_service.JAIL_MINUTES_ON_FAILED_ROB}** 分钟。\n"
+        f"慌乱中还掉了 **{fine}** 喵币（约 {int(fine_rate * 100)}% 身家）。"
+    )
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
@@ -144,19 +183,43 @@ class CrimePanelView(discord.ui.View):
             remain = casino_service.format_remaining_minutes(current_sentence)
             return await interaction.response.send_message(f"🚨 你还在坐牢，剩余约 **{remain}** 分钟。", ephemeral=True)
 
+        today = casino_service.get_beijing_today()
+        robberies_today, robbery_successes_today, _guard_duels_today = await get_daily_crime_counters(self.user_id, today)
+        if (
+            robberies_today >= casino_service.MAX_ROBBERIES_PER_DAY
+            or robbery_successes_today >= casino_service.MAX_ROBBERY_SUCCESSES_PER_DAY
+        ):
+            return await interaction.response.send_message(
+                (
+                    "🚫 你今天的打劫额度已经用完了。"
+                    f"尝试上限 **{casino_service.MAX_ROBBERIES_PER_DAY}** 次，"
+                    f"成功上限 **{casino_service.MAX_ROBBERY_SUCCESSES_PER_DAY}** 次。"
+                ),
+                ephemeral=True,
+            )
+        await consume_daily_robbery_attempt(self.user_id, today)
+
         if random.random() < casino_service.BANK_ROB_SUCCESS_RATE:
             bank_pool = await get_total_bank_pool()
             loot = casino_service.determine_bank_robbery_loot(BANK_VAULT_BASE + bank_pool)
-            await apply_bank_robbery_success(self.user_id, loot)
+            await apply_bank_robbery_success(self.user_id, loot, today=today)
             embed = discord.Embed(title="🏦💥 银行大劫案成功", color=0xF1C40F)
             embed.set_image(url=ROB_IMAGE_URL)
             embed.description = f"你成功卷走 **{loot}** 喵币，银行活期账户统一承受了 2% 损耗。"
             return await interaction.response.send_message(embed=embed, ephemeral=True)
 
+        wallet_after_attempt, _thief_level = await get_wallet_and_level(self.user_id)
+        fine_rate = random.randint(15, 30) / 100
+        fine = int(wallet_after_attempt * fine_rate)
+        if fine > 0:
+            await update_money(self.user_id, -fine)
         await send_user_to_jail(self.user_id, casino_service.JAIL_MINUTES_ON_FAILED_ROB)
         embed = discord.Embed(title="🚓 银行打劫失败", color=0xE74C3C)
         embed.set_image(url=JAIL_IMAGE_URL)
-        embed.description = f"保安把你直接送进监狱 **{casino_service.JAIL_MINUTES_ON_FAILED_ROB}** 分钟。"
+        embed.description = (
+            f"保安把你直接送进监狱 **{casino_service.JAIL_MINUTES_ON_FAILED_ROB}** 分钟。\n"
+            f"混乱中你还丢了 **{fine}** 喵币（约 {int(fine_rate * 100)}% 身家）。"
+        )
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @discord.ui.button(label="贿赂守卫", style=discord.ButtonStyle.success, emoji="💸", row=1)
@@ -188,6 +251,15 @@ class CrimePanelView(discord.ui.View):
         if sentence_end is None:
             return await interaction.response.send_message("🟢 你现在是自由身，不需要越狱。", ephemeral=True)
 
+        today = casino_service.get_beijing_today()
+        _robberies_today, _robbery_successes_today, guard_duels_today = await get_daily_crime_counters(self.user_id, today)
+        if guard_duels_today >= casino_service.MAX_GUARD_DUELS_PER_DAY:
+            return await interaction.response.send_message(
+                f"🚫 你今天已经把守卫打烦了，明天再来。上限 **{casino_service.MAX_GUARD_DUELS_PER_DAY}** 次。",
+                ephemeral=True,
+            )
+        await consume_daily_guard_duel_attempt(self.user_id, today)
+
         player_total, guard_total = casino_service.roll_guard_duel()
         embed = discord.Embed(title="⚔️ 越狱对决", color=0xE67E22)
         embed.add_field(name="你", value=str(player_total), inline=True)
@@ -197,10 +269,18 @@ class CrimePanelView(discord.ui.View):
             embed.color = 0x2ECC71
             embed.description = "🎉 你打赢了守卫，成功越狱。"
         else:
+            wallet, _thief_level = await get_wallet_and_level(self.user_id)
+            fine_rate = random.randint(3, 5) / 100
+            fine = int(wallet * fine_rate)
+            if fine > 0:
+                await update_money(self.user_id, -fine)
             new_end = await extend_jail_sentence(self.user_id, casino_service.DUEL_JAIL_EXTENSION_MINUTES)
             remain = casino_service.format_remaining_minutes(new_end)
             embed.color = 0xE74C3C
-            embed.description = f"👎 越狱失败，刑期延长 **{casino_service.DUEL_JAIL_EXTENSION_MINUTES}** 分钟，剩余约 **{remain}** 分钟。"
+            embed.description = (
+                f"👎 越狱失败，刑期延长 **{casino_service.DUEL_JAIL_EXTENSION_MINUTES}** 分钟，剩余约 **{remain}** 分钟。\n"
+                f"还赔了 **{fine}** 喵币（约 {int(fine_rate * 100)}% 身家）。"
+            )
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @discord.ui.button(label="刷新状态", style=discord.ButtonStyle.secondary, emoji="🔄", row=1)

@@ -190,7 +190,11 @@ async def setup_db():
 				user_id INTEGER PRIMARY KEY,
 				sentence_ends_at TEXT,
 				bribes_today INTEGER DEFAULT 0,
-				last_bribe_date TEXT
+				last_bribe_date TEXT,
+				robberies_today INTEGER DEFAULT 0,
+				robbery_successes_today INTEGER DEFAULT 0,
+				guard_duels_today INTEGER DEFAULT 0,
+				last_crime_date TEXT
 			)
 			"""
 		)
@@ -363,6 +367,22 @@ async def setup_db():
 			pass
 		try:
 			await db.execute("ALTER TABLE farm_theft_stats ADD COLUMN steal_income_total INTEGER DEFAULT 0")
+		except Exception:
+			pass
+		try:
+			await db.execute("ALTER TABLE casino_jail_records ADD COLUMN robberies_today INTEGER DEFAULT 0")
+		except Exception:
+			pass
+		try:
+			await db.execute("ALTER TABLE casino_jail_records ADD COLUMN guard_duels_today INTEGER DEFAULT 0")
+		except Exception:
+			pass
+		try:
+			await db.execute("ALTER TABLE casino_jail_records ADD COLUMN robbery_successes_today INTEGER DEFAULT 0")
+		except Exception:
+			pass
+		try:
+			await db.execute("ALTER TABLE casino_jail_records ADD COLUMN last_crime_date TEXT")
 		except Exception:
 			pass
 

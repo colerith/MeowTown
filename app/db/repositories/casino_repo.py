@@ -20,8 +20,9 @@ async def _ensure_casino_rows(db, user_id):
     await db.execute(
         """
         INSERT OR IGNORE INTO casino_jail_records (
-            user_id, sentence_ends_at, bribes_today, last_bribe_date
-        ) VALUES (?, NULL, 0, NULL)
+            user_id, sentence_ends_at, bribes_today, last_bribe_date,
+            robberies_today, robbery_successes_today, guard_duels_today, last_crime_date
+        ) VALUES (?, NULL, 0, NULL, 0, 0, 0, NULL)
         """,
         (user_id,),
     )
@@ -198,7 +199,11 @@ async def get_casino_stats(user_id):
                 s.jail_count,
                 j.sentence_ends_at,
                 j.bribes_today,
-                j.last_bribe_date
+                j.last_bribe_date,
+                j.robberies_today,
+                j.robbery_successes_today,
+                j.guard_duels_today,
+                j.last_crime_date
             FROM casino_game_stats s
             JOIN casino_jail_records j ON j.user_id = s.user_id
             WHERE s.user_id = ?
@@ -215,7 +220,99 @@ async def get_casino_stats(user_id):
             row["sentence_ends_at"],
             int(row["bribes_today"] or 0),
             row["last_bribe_date"],
+            int(row["robberies_today"] or 0),
+            int(row["robbery_successes_today"] or 0),
+            int(row["guard_duels_today"] or 0),
+            row["last_crime_date"],
         )
+
+
+async def get_daily_crime_counters(user_id, today):
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        await _ensure_casino_rows(db, user_id)
+        cursor = await db.execute(
+            """
+            SELECT robberies_today, robbery_successes_today, guard_duels_today, last_crime_date
+            FROM casino_jail_records
+            WHERE user_id = ?
+            """,
+            (user_id,),
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            return 0, 0, 0
+        if row["last_crime_date"] != today:
+            return 0, 0, 0
+        return (
+            int(row["robberies_today"] or 0),
+            int(row["robbery_successes_today"] or 0),
+            int(row["guard_duels_today"] or 0),
+        )
+
+
+async def consume_daily_robbery_attempt(user_id, today):
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        await _ensure_casino_rows(db, user_id)
+        cursor = await db.execute(
+            """
+            SELECT robberies_today, robbery_successes_today, guard_duels_today, last_crime_date
+            FROM casino_jail_records
+            WHERE user_id = ?
+            """,
+            (user_id,),
+        )
+        row = await cursor.fetchone()
+        robberies_today = int(row["robberies_today"] or 0) if row else 0
+        robbery_successes_today = int(row["robbery_successes_today"] or 0) if row else 0
+        guard_duels_today = int(row["guard_duels_today"] or 0) if row else 0
+        if row and row["last_crime_date"] != today:
+            robberies_today = 0
+            robbery_successes_today = 0
+            guard_duels_today = 0
+        await db.execute(
+            """
+            UPDATE casino_jail_records
+            SET robberies_today = ?, robbery_successes_today = ?, guard_duels_today = ?, last_crime_date = ?
+            WHERE user_id = ?
+            """,
+            (robberies_today + 1, robbery_successes_today, guard_duels_today, today, user_id),
+        )
+        await db.commit()
+        return robberies_today + 1
+
+
+async def consume_daily_guard_duel_attempt(user_id, today):
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        await _ensure_casino_rows(db, user_id)
+        cursor = await db.execute(
+            """
+            SELECT robberies_today, robbery_successes_today, guard_duels_today, last_crime_date
+            FROM casino_jail_records
+            WHERE user_id = ?
+            """,
+            (user_id,),
+        )
+        row = await cursor.fetchone()
+        robberies_today = int(row["robberies_today"] or 0) if row else 0
+        robbery_successes_today = int(row["robbery_successes_today"] or 0) if row else 0
+        guard_duels_today = int(row["guard_duels_today"] or 0) if row else 0
+        if row and row["last_crime_date"] != today:
+            robberies_today = 0
+            robbery_successes_today = 0
+            guard_duels_today = 0
+        await db.execute(
+            """
+            UPDATE casino_jail_records
+            SET robberies_today = ?, robbery_successes_today = ?, guard_duels_today = ?, last_crime_date = ?
+            WHERE user_id = ?
+            """,
+            (robberies_today, robbery_successes_today, guard_duels_today + 1, today, user_id),
+        )
+        await db.commit()
+        return guard_duels_today + 1
 
 
 async def apply_game_result(user_id, money_delta, win=False, loss=False):
@@ -357,10 +454,27 @@ async def transfer_money_between_users(from_user_id, to_user_id, amount):
         await db.commit()
 
 
-async def apply_bank_robbery_success(user_id, loot):
+async def apply_bank_robbery_success(user_id, loot, today=None):
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         await _ensure_casino_rows(db, user_id)
+        if today is not None:
+            cursor = await db.execute(
+                """
+                SELECT robberies_today, robbery_successes_today, guard_duels_today, last_crime_date
+                FROM casino_jail_records
+                WHERE user_id = ?
+                """,
+                (user_id,),
+            )
+            row = await cursor.fetchone()
+            robberies_today = int(row["robberies_today"] or 0) if row else 0
+            robbery_successes_today = int(row["robbery_successes_today"] or 0) if row else 0
+            guard_duels_today = int(row["guard_duels_today"] or 0) if row else 0
+            if row and row["last_crime_date"] != today:
+                robberies_today = 0
+                robbery_successes_today = 0
+                guard_duels_today = 0
         await db.execute("UPDATE users SET money = money + ? WHERE user_id = ?", (loot, user_id))
         await db.execute(
             """
@@ -371,6 +485,15 @@ async def apply_bank_robbery_success(user_id, loot):
             """,
             (loot, user_id),
         )
+        if today is not None:
+            await db.execute(
+                """
+                UPDATE casino_jail_records
+                SET robberies_today = ?, robbery_successes_today = ?, guard_duels_today = ?, last_crime_date = ?
+                WHERE user_id = ?
+                """,
+                (robberies_today, robbery_successes_today + 1, guard_duels_today, today, user_id),
+            )
         await db.execute(
             """
             UPDATE casino_bank_accounts
@@ -383,10 +506,27 @@ async def apply_bank_robbery_success(user_id, loot):
         await db.commit()
 
 
-async def record_player_robbery_success(user_id, loot):
+async def record_player_robbery_success(user_id, loot, today=None):
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         await _ensure_casino_rows(db, user_id)
+        if today is not None:
+            cursor = await db.execute(
+                """
+                SELECT robberies_today, robbery_successes_today, guard_duels_today, last_crime_date
+                FROM casino_jail_records
+                WHERE user_id = ?
+                """,
+                (user_id,),
+            )
+            row = await cursor.fetchone()
+            robberies_today = int(row["robberies_today"] or 0) if row else 0
+            robbery_successes_today = int(row["robbery_successes_today"] or 0) if row else 0
+            guard_duels_today = int(row["guard_duels_today"] or 0) if row else 0
+            if row and row["last_crime_date"] != today:
+                robberies_today = 0
+                robbery_successes_today = 0
+                guard_duels_today = 0
         await db.execute(
             """
             UPDATE casino_crime_stats
@@ -396,6 +536,15 @@ async def record_player_robbery_success(user_id, loot):
             """,
             (loot, user_id),
         )
+        if today is not None:
+            await db.execute(
+                """
+                UPDATE casino_jail_records
+                SET robberies_today = ?, robbery_successes_today = ?, guard_duels_today = ?, last_crime_date = ?
+                WHERE user_id = ?
+                """,
+                (robberies_today, robbery_successes_today + 1, guard_duels_today, today, user_id),
+            )
         await db.commit()
 
 
@@ -661,12 +810,15 @@ __all__ = [
     "get_bank_leaderboard",
     "get_buff_bonus_multiplier",
     "get_casino_stats",
+    "get_daily_crime_counters",
     "get_gambling_profile",
     "get_shop_purchase_state",
     "get_total_bank_pool",
     "get_wallet_and_level",
     "has_active_buff",
     "purchase_buff_item",
+    "consume_daily_guard_duel_attempt",
+    "consume_daily_robbery_attempt",
     "record_player_robbery_success",
     "release_from_jail",
     "send_user_to_jail",
