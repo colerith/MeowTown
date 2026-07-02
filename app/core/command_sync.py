@@ -3,27 +3,30 @@ from __future__ import annotations
 from typing import Iterable
 
 
-def get_town_group_commands() -> list:
-    from app.cogs.gameplay.cat import Cat
-    from app.cogs.core.admin import Admin
-    from app.cogs.core.announcement import Announcement
-    from app.cogs.core.general import General
-    from app.cogs.core.welfare import Welfare
-
-    return [
-        Cat.register,
-        Cat.profile,
-        Cat.compensation_config,
-        Cat.reset_stock_market,
-        Cat.backfill_registered_role,
-        Cat.send_signin_panel,
-        Cat.send_stock_panel,
-        Admin.backup,
-        Announcement.publish_announcement,
-        General.help,
-        General.ping,
-        Welfare.welfare_drop,
+def get_town_group_commands(bot) -> list:
+    command_specs = [
+        ("Cat", "register"),
+        ("Cat", "profile"),
+        ("Cat", "compensation_config"),
+        ("Cat", "reset_stock_market"),
+        ("Cat", "backfill_registered_role"),
+        ("Cat", "send_signin_panel"),
+        ("Cat", "send_stock_panel"),
+        ("Admin", "backup"),
+        ("Announcement", "publish_announcement"),
+        ("General", "help"),
+        ("General", "ping"),
+        ("Welfare", "welfare_drop"),
     ]
+    commands: list = []
+    for cog_name, command_attr in command_specs:
+        cog = bot.get_cog(cog_name)
+        if cog is None:
+            continue
+        command = getattr(cog, command_attr, None)
+        if command is not None:
+            commands.append(command)
+    return commands
 
 
 def sanitize_command_options(command) -> None:
@@ -44,7 +47,7 @@ def ensure_town_group_pending_synced(bot) -> bool:
         from app.cogs.gameplay.cat import TOWN_GROUP
     except Exception:
         return False
-    town_group_commands = get_town_group_commands()
+    town_group_commands = get_town_group_commands(bot)
     TOWN_GROUP.subcommands = list(town_group_commands)
     sanitize_command_options(TOWN_GROUP)
 
