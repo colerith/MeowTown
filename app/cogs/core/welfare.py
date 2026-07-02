@@ -6,7 +6,7 @@ import discord
 from discord.ext import commands
 from discord.ui import InputText, Modal, View
 
-from app.cogs.gameplay.cat import TOWN_GROUP
+from app.cogs.gameplay.cat import TOWN_GROUP, register_town_group_command
 from app.db.repositories.stock_repo import grant_stock_shares
 from app.db.repositories.user_repo import get_citizen, update_money
 from app.db.repositories.welfare_repo import (
@@ -500,4 +500,5 @@ class Welfare(commands.Cog):
 
 
 def setup(bot):
+    register_town_group_command(bot, Welfare.welfare_drop)
     bot.add_cog(Welfare(bot))

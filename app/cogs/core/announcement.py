@@ -2,7 +2,7 @@ import discord
 from discord.ext import commands
 from discord.ui import InputText, Modal, View
 
-from app.cogs.gameplay.cat import TOWN_GROUP
+from app.cogs.gameplay.cat import TOWN_GROUP, register_town_group_command
 
 
 DEFAULT_ANNOUNCEMENT_TITLE = "📢 喵喵小镇公告"
@@ -172,4 +172,5 @@ class Announcement(commands.Cog):
 
 
 def setup(bot):
+    register_town_group_command(bot, Announcement.publish_announcement)
     bot.add_cog(Announcement(bot))

@@ -1,7 +1,7 @@
 import discord
 from discord.ext import commands
 
-from app.cogs.gameplay.cat import TOWN_GROUP
+from app.cogs.gameplay.cat import TOWN_GROUP, register_town_group_command
 from app.shared.helpers import get_help_embed
 
 
@@ -22,4 +22,6 @@ class General(commands.Cog):
 
 
 def setup(bot):
+	register_town_group_command(bot, General.help)
+	register_town_group_command(bot, General.ping)
 	bot.add_cog(General(bot))

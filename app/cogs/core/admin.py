@@ -5,7 +5,7 @@ import shutil
 import discord
 from discord.ext import commands
 
-from app.cogs.gameplay.cat import TOWN_GROUP
+from app.cogs.gameplay.cat import TOWN_GROUP, register_town_group_command
 
 
 class Admin(commands.Cog):
@@ -54,4 +54,5 @@ class Admin(commands.Cog):
 
 
 def setup(bot):
+	register_town_group_command(bot, Admin.backup)
 	bot.add_cog(Admin(bot))

@@ -32,6 +32,22 @@ MAGIC_REROLL_COST = 2000
 TOWN_GROUP = discord.SlashCommandGroup("喵喵小镇", "喵喵小镇市民系统")
 
 
+def register_town_group_command(bot, command):
+    existing_names = {subcommand.name for subcommand in TOWN_GROUP.subcommands}
+    if command.name not in existing_names:
+        TOWN_GROUP.subcommands.append(command)
+    command.parent = TOWN_GROUP
+
+    for pending_command in getattr(bot, "pending_application_commands", []):
+        if getattr(pending_command, "name", None) != TOWN_GROUP.name:
+            continue
+        pending_names = {subcommand.name for subcommand in getattr(pending_command, "subcommands", [])}
+        if command.name not in pending_names:
+            pending_command.subcommands.append(command)
+        command.parent = pending_command
+    return command
+
+
 def build_progress_bar(current_value, total_value, length=10):
     safe_total = max(1, int(total_value))
     ratio = min(1.0, max(0.0, current_value / safe_total))
