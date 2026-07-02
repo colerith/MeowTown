@@ -1,5 +1,5 @@
 import random
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from itertools import combinations
 
 
@@ -39,7 +39,7 @@ POKER_HAND_NAMES = {
     1: "高牌",
 }
 def get_utc_now():
-    return datetime.now(UTC).replace(tzinfo=None)
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 def parse_positive_int(value):
