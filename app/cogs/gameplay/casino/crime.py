@@ -46,58 +46,79 @@ async def build_crime_embed(user_id: int, user_name: str):
     return embed
 
 
-class RobPlayerSelect(discord.ui.UserSelect):
+async def resolve_robbery_against_target(interaction: discord.Interaction, robber_id: int, target: discord.abc.User):
+    if target.id == robber_id:
+        return await interaction.response.send_message("🚫 不能打劫自己。", ephemeral=True)
+    if target.bot:
+        return await interaction.response.send_message("🚫 机器人不参与犯罪玩法。", ephemeral=True)
+
+    victim = await get_citizen(target.id)
+    if not victim:
+        return await interaction.response.send_message(f"🚫 **{target.display_name}** 还没注册小镇档案。", ephemeral=True)
+
+    current_sentence = await get_active_sentence_end(robber_id)
+    if current_sentence is not None:
+        remain = casino_service.format_remaining_minutes(current_sentence)
+        return await interaction.response.send_message(f"🚨 你还在坐牢，剩余约 **{remain}** 分钟。", ephemeral=True)
+
+    _thief_wallet, thief_level = await get_wallet_and_level(robber_id)
+    victim_wallet, victim_level = await get_wallet_and_level(target.id)
+    if victim_wallet <= 0:
+        return await interaction.response.send_message(f"💨 **{target.display_name}** 身上没有可抢的喵币。", ephemeral=True)
+
+    success_rate = casino_service.calculate_player_rob_success_rate(thief_level, victim_level)
+    if await has_active_buff(target.id, "rob_protection"):
+        success_rate = max(casino_service.PLAYER_ROB_SUCCESS_MIN_RATE, success_rate * 0.7)
+
+    if random.random() < success_rate:
+        loot = casino_service.determine_player_robbery_loot(victim_wallet)
+        await transfer_money_between_users(target.id, robber_id, loot)
+        embed = discord.Embed(title="🔫 打劫成功", color=0x2ECC71)
+        embed.set_image(url=ROB_IMAGE_URL)
+        embed.description = (
+            f"你从 **{target.display_name}** 身上抢到了 **{loot}** 喵币。\n"
+            f"本次成功率约 **{success_rate * 100:.0f}%**。"
+        )
+        return await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    await send_user_to_jail(robber_id, casino_service.JAIL_MINUTES_ON_FAILED_ROB)
+    embed = discord.Embed(title="👮 打劫失败", color=0xE74C3C)
+    embed.set_image(url=JAIL_IMAGE_URL)
+    embed.description = f"你被 **{target.display_name}** 当场反制，入狱 **{casino_service.JAIL_MINUTES_ON_FAILED_ROB}** 分钟。"
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+class RobPlayerModal(discord.ui.Modal):
     def __init__(self, user_id: int):
-        super().__init__(placeholder="选择你要打劫的目标...", min_values=1, max_values=1)
+        super().__init__(title="打劫目标")
         self.user_id = user_id
+        self.add_item(
+            discord.ui.InputText(
+                label="输入目标用户 ID 或 @提及",
+                placeholder="例如 123456789012345678 或 <@123456789012345678>",
+                required=True,
+            )
+        )
 
     async def callback(self, interaction: discord.Interaction):
-        target = self.values[0]
-        if target.id == self.user_id:
-            return await interaction.response.send_message("🚫 不能打劫自己。", ephemeral=True)
-        if target.bot:
-            return await interaction.response.send_message("🚫 机器人不参与犯罪玩法。", ephemeral=True)
+        raw_value = self.children[0].value.strip()
+        target_id_text = raw_value.replace("<@", "").replace("!", "").replace(">", "").strip()
+        if not target_id_text.isdigit():
+            return await interaction.response.send_message("🚫 请输入有效的用户 ID 或 @提及。", ephemeral=True)
 
-        victim = await get_citizen(target.id)
-        if not victim:
-            return await interaction.response.send_message(f"🚫 **{target.display_name}** 还没注册小镇档案。", ephemeral=True)
+        target_id = int(target_id_text)
+        target = interaction.guild.get_member(target_id) if interaction.guild else None
+        if target is None:
+            target = interaction.client.get_user(target_id)
+        if target is None:
+            try:
+                target = await interaction.client.fetch_user(target_id)
+            except Exception:
+                target = None
+        if target is None:
+            return await interaction.response.send_message("🚫 找不到这个目标用户。", ephemeral=True)
 
-        current_sentence = await get_active_sentence_end(self.user_id)
-        if current_sentence is not None:
-            remain = casino_service.format_remaining_minutes(current_sentence)
-            return await interaction.response.send_message(f"🚨 你还在坐牢，剩余约 **{remain}** 分钟。", ephemeral=True)
-
-        thief_wallet, thief_level = await get_wallet_and_level(self.user_id)
-        victim_wallet, victim_level = await get_wallet_and_level(target.id)
-        if victim_wallet <= 0:
-            return await interaction.response.send_message(f"💨 **{target.display_name}** 身上没有可抢的喵币。", ephemeral=True)
-
-        success_rate = casino_service.calculate_player_rob_success_rate(thief_level, victim_level)
-        if await has_active_buff(target.id, "rob_protection"):
-            success_rate = max(casino_service.PLAYER_ROB_SUCCESS_MIN_RATE, success_rate * 0.7)
-
-        if random.random() < success_rate:
-            loot = casino_service.determine_player_robbery_loot(victim_wallet)
-            await transfer_money_between_users(target.id, self.user_id, loot)
-            embed = discord.Embed(title="🔫 打劫成功", color=0x2ECC71)
-            embed.set_image(url=ROB_IMAGE_URL)
-            embed.description = (
-                f"你从 **{target.display_name}** 身上抢到了 **{loot}** 喵币。\n"
-                f"本次成功率约 **{success_rate * 100:.0f}%**。"
-            )
-            return await interaction.response.send_message(embed=embed, ephemeral=True)
-
-        await send_user_to_jail(self.user_id, casino_service.JAIL_MINUTES_ON_FAILED_ROB)
-        embed = discord.Embed(title="👮 打劫失败", color=0xE74C3C)
-        embed.set_image(url=JAIL_IMAGE_URL)
-        embed.description = f"你被 **{target.display_name}** 当场反制，入狱 **{casino_service.JAIL_MINUTES_ON_FAILED_ROB}** 分钟。"
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-
-
-class RobPlayerView(discord.ui.View):
-    def __init__(self, user_id: int):
-        super().__init__(timeout=120)
-        self.add_item(RobPlayerSelect(user_id))
+        await resolve_robbery_against_target(interaction, self.user_id, target)
 
 
 class CrimePanelView(discord.ui.View):
@@ -113,7 +134,7 @@ class CrimePanelView(discord.ui.View):
 
     @discord.ui.button(label="打劫玩家", style=discord.ButtonStyle.primary, emoji="🔫", row=0)
     async def rob_player_btn(self, button, interaction):
-        await interaction.response.send_message("选择目标后立即执行打劫：", view=RobPlayerView(self.user_id), ephemeral=True)
+        await interaction.response.send_modal(RobPlayerModal(self.user_id))
 
     @discord.ui.button(label="打劫银行", style=discord.ButtonStyle.danger, emoji="🏦", row=0)
     async def rob_bank_btn(self, button, interaction):
