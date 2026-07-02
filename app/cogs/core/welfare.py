@@ -24,6 +24,7 @@ from app.db.repositories.welfare_repo import (
 from app.shared.data.stock_data import STOCKS
 from app.shared.discord_roles import REGISTERED_ROLE_ID, grant_role_by_id
 
+ADMIN_ONLY_PERMISSIONS = discord.Permissions(administrator=True)
 WELFARE_ROLE_NOTICE_CHANNEL_ID = 1426616953975607476
 WELFARE_ROLE_NOTICE_MARKER = "[WELFARE_ROLE_NOTICE_V2]"
 DEFAULT_WELFARE_TITLE = "🎁 喵喵小镇福利发放"
@@ -657,7 +658,11 @@ class Welfare(commands.Cog):
         await self.ensure_claim_view_registered()
         await self.backfill_role_notices()
 
-    @TOWN_GROUP.command(name="福利发放", description="【仅限管理员】发送一条可配置的福利领取公告")
+    @TOWN_GROUP.command(
+        name="福利发放",
+        description="【仅限管理员】发送一条可配置的福利领取公告",
+        default_member_permissions=ADMIN_ONLY_PERMISSIONS,
+    )
     @commands.is_owner()
     async def welfare_drop(
         self,
@@ -682,7 +687,11 @@ class Welfare(commands.Cog):
         )
         view.panel_message = panel_message
 
-    @TOWN_GROUP.command(name="重建福利播报", description="【仅限管理员】清空福利领取播报并按新格式重发")
+    @TOWN_GROUP.command(
+        name="重建福利播报",
+        description="【仅限管理员】清空福利领取播报并按新格式重发",
+        default_member_permissions=ADMIN_ONLY_PERMISSIONS,
+    )
     @commands.is_owner()
     async def rebuild_welfare_role_notices(self, ctx: discord.ApplicationContext):
         await ctx.defer(ephemeral=True)

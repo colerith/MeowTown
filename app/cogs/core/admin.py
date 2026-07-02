@@ -9,13 +9,19 @@ from discord.ext import commands
 from app.cogs.gameplay.cat import TOWN_GROUP, register_town_group_command
 from app.core.command_sync import summarize_pending_commands, summarize_registered_commands, sync_and_log_commands
 
+ADMIN_ONLY_PERMISSIONS = discord.Permissions(administrator=True)
+
 
 class Admin(commands.Cog):
 	def __init__(self, bot):
 		self.bot = bot
 		self.logger = getattr(bot, "meowtown_logger", logging.getLogger("喵喵小镇"))
 
-	@commands.slash_command(name="同步命令", description="【仅限管理员】全局同步 Discord 应用命令")
+	@commands.slash_command(
+		name="同步命令",
+		description="【仅限管理员】全局同步 Discord 应用命令",
+		default_member_permissions=ADMIN_ONLY_PERMISSIONS,
+	)
 	@commands.is_owner()
 	async def sync_commands_global(self, ctx: discord.ApplicationContext):
 		await ctx.defer(ephemeral=True)
@@ -39,7 +45,11 @@ class Admin(commands.Cog):
 			ephemeral=True,
 		)
 
-	@TOWN_GROUP.command(name="备份数据", description="【仅限管理员】导出当前数据库文件")
+	@TOWN_GROUP.command(
+		name="备份数据",
+		description="【仅限管理员】导出当前数据库文件",
+		default_member_permissions=ADMIN_ONLY_PERMISSIONS,
+	)
 	@commands.is_owner()
 	async def backup(self, ctx: discord.ApplicationContext):
 		db_source = "./data/meowtown.db"

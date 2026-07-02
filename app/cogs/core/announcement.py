@@ -4,6 +4,8 @@ from discord.ui import InputText, Modal, View
 
 from app.cogs.gameplay.cat import TOWN_GROUP, register_town_group_command
 
+ADMIN_ONLY_PERMISSIONS = discord.Permissions(administrator=True)
+
 
 DEFAULT_ANNOUNCEMENT_TITLE = "📢 喵喵小镇公告"
 DEFAULT_ANNOUNCEMENT_BODY = "这里是最新的喵喵小镇公告内容。"
@@ -195,7 +197,11 @@ class Announcement(commands.Cog):
         )
         view.panel_message = panel_message
 
-    @TOWN_GROUP.command(name="发布公告", description="【仅限管理员】发布一条可继续编辑的公告")
+    @TOWN_GROUP.command(
+        name="发布公告",
+        description="【仅限管理员】发布一条可继续编辑的公告",
+        default_member_permissions=ADMIN_ONLY_PERMISSIONS,
+    )
     @commands.is_owner()
     async def publish_announcement(
         self,

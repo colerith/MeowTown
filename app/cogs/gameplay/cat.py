@@ -31,6 +31,7 @@ from app.shared.data.cat_data import generate_cat_identity
 from app.shared.discord_roles import REGISTERED_ROLE_ID, grant_registered_role
 
 MAGIC_REROLL_COST = 2000
+ADMIN_ONLY_PERMISSIONS = discord.Permissions(administrator=True)
 TOWN_GROUP = discord.SlashCommandGroup("喵喵小镇", "喵喵小镇市民系统")
 
 
@@ -544,14 +545,22 @@ class Cat(commands.Cog):
         embed, view = await build_profile_panel(ctx.author, summary)
         await ctx.respond(embed=embed, view=view)
 
-    @citizen.command(name="补偿公告配置", description="【仅限管理员】打开股票补偿公告配置面板")
+    @citizen.command(
+        name="补偿公告配置",
+        description="【仅限管理员】打开股票补偿公告配置面板",
+        default_member_permissions=ADMIN_ONLY_PERMISSIONS,
+    )
     @commands.is_owner()
     async def compensation_config(self, ctx: discord.ApplicationContext):
         await ctx.defer(ephemeral=True)
         view = CompensationConfigView()
         await ctx.followup.send(embed=view.build_preview_embed(), view=view, ephemeral=True)
 
-    @citizen.command(name="重置股市", description="【仅限管理员】将股票价格重置到基准值")
+    @citizen.command(
+        name="重置股市",
+        description="【仅限管理员】将股票价格重置到基准值",
+        default_member_permissions=ADMIN_ONLY_PERMISSIONS,
+    )
     @commands.is_owner()
     async def reset_stock_market(self, ctx: discord.ApplicationContext):
         await ctx.defer(ephemeral=True)
@@ -563,7 +572,11 @@ class Cat(commands.Cog):
         embed, _view = await create_stock_market_dashboard()
         await ctx.followup.send("✅ 股票价格已重置为基准值。", embed=embed, ephemeral=True)
 
-    @citizen.command(name="补发镇民组", description="【仅限管理员】为所有已注册喵喵补发镇民身份组")
+    @citizen.command(
+        name="补发镇民组",
+        description="【仅限管理员】为所有已注册喵喵补发镇民身份组",
+        default_member_permissions=ADMIN_ONLY_PERMISSIONS,
+    )
     @commands.is_owner()
     async def backfill_registered_role(self, ctx: discord.ApplicationContext):
         await ctx.defer(ephemeral=True)
@@ -613,7 +626,11 @@ class Cat(commands.Cog):
             )
         )
 
-    @citizen.command(name="发送签到面板", description="【仅限管理员】手动重发每日签到面板")
+    @citizen.command(
+        name="发送签到面板",
+        description="【仅限管理员】手动重发每日签到面板",
+        default_member_permissions=ADMIN_ONLY_PERMISSIONS,
+    )
     @commands.is_owner()
     async def send_signin_panel(self, ctx: discord.ApplicationContext):
         await ctx.defer(ephemeral=True)
@@ -630,7 +647,11 @@ class Cat(commands.Cog):
             ephemeral=True,
         )
 
-    @citizen.command(name="发送股市面板", description="【仅限管理员】手动重发股市快讯面板")
+    @citizen.command(
+        name="发送股市面板",
+        description="【仅限管理员】手动重发股市快讯面板",
+        default_member_permissions=ADMIN_ONLY_PERMISSIONS,
+    )
     @commands.is_owner()
     async def send_stock_panel(self, ctx: discord.ApplicationContext):
         await ctx.defer(ephemeral=True)
