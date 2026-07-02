@@ -134,6 +134,16 @@ async def has_claimed_welfare(message_id, user_id):
         return row[0] if row else None
 
 
+async def count_claimed_welfare_users(message_id):
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "SELECT COUNT(*) FROM welfare_claims WHERE message_id = ? AND status = 'claimed'",
+            (message_id,),
+        )
+        row = await cursor.fetchone()
+        return int(row[0]) if row and row[0] is not None else 0
+
+
 async def get_pending_role_notice_claims():
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute(
@@ -180,6 +190,7 @@ __all__ = [
     "cancel_welfare_claim",
     "finish_welfare_claim",
     "get_welfare_message",
+    "count_claimed_welfare_users",
     "get_pending_role_notice_claims",
     "has_claimed_welfare",
     "mark_role_notice_sent",

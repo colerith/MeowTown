@@ -12,6 +12,7 @@ from app.db.repositories.user_repo import get_citizen, update_money
 from app.db.repositories.welfare_repo import (
     begin_welfare_claim,
     cancel_welfare_claim,
+    count_claimed_welfare_users,
     finish_welfare_claim,
     get_welfare_message,
     get_pending_role_notice_claims,
@@ -144,11 +145,18 @@ def summarize_stock_rewards(entries):
     return "\n".join(lines)
 
 
-def build_welfare_embed(config: WelfareConfig, guild: discord.Guild | None = None, *, editor_name: str | None = None):
+def build_welfare_embed(
+    config: WelfareConfig,
+    guild: discord.Guild | None = None,
+    *,
+    editor_name: str | None = None,
+    claimed_count: int = 0,
+):
     embed = discord.Embed(title=config.title, description=config.body, color=0xF39C12)
     embed.add_field(name="🎭 身份组抽选", value=summarize_role_rewards(config.role_rewards, guild), inline=False)
     embed.add_field(name="💰 喵币发放", value=summarize_money_reward(config.money_reward), inline=False)
     embed.add_field(name="📈 股份发放", value=summarize_stock_rewards(config.stock_rewards), inline=False)
+    embed.add_field(name="📊 领取喵喵统计", value=f"已领取：**{claimed_count}** 只喵喵", inline=False)
     if editor_name:
         embed.set_footer(text=f"最后编辑：{editor_name}")
     else:
@@ -409,6 +417,15 @@ class WelfareClaimView(View):
             if sent:
                 await mark_role_notice_sent(message.id, interaction.user.id)
 
+        claimed_count = await count_claimed_welfare_users(message.id)
+        try:
+            await message.edit(
+                embed=build_welfare_embed(config, interaction.guild, claimed_count=claimed_count),
+                view=WelfareClaimView(),
+            )
+        except discord.HTTPException:
+            pass
+
         await interaction.response.send_message("✅ 福利领取成功！\n" + "\n".join(reward_lines), ephemeral=True)
 
 
@@ -419,10 +436,11 @@ class WelfareConfigView(View):
         self.target_message = None
         self.panel_message = None
         self.config = config
+        self._claimed_count = 0
 
     def build_panel_embed(self):
         guild = self.target_message.guild if self.target_message else getattr(self.target_channel, "guild", None)
-        embed = build_welfare_embed(self.config, guild)
+        embed = build_welfare_embed(self.config, guild, claimed_count=self.claimed_count)
         mention_status = "开启" if self.config.mention_registered_role else "关闭"
         embed.add_field(name="📣 发布设置", value=f"艾特喵喵镇民：**{mention_status}**", inline=False)
         embed.add_field(
@@ -431,6 +449,18 @@ class WelfareConfigView(View):
             inline=False,
         )
         return embed
+
+    @property
+    def claimed_count(self):
+        if self.target_message is None:
+            return 0
+        return getattr(self, "_claimed_count", 0)
+
+    async def refresh_claimed_count(self):
+        if self.target_message is None:
+            self._claimed_count = 0
+            return
+        self._claimed_count = await count_claimed_welfare_users(self.target_message.id)
 
     async def refresh_panel_message(self):
         if self.panel_message is None:
@@ -443,6 +473,7 @@ class WelfareConfigView(View):
     async def sync_message(self, interaction: discord.Interaction | None = None):
         if self.target_message is None:
             return
+        await self.refresh_claimed_count()
         content = None
         if self.config.mention_registered_role:
             role = self.target_message.guild.get_role(REGISTERED_ROLE_ID) if self.target_message.guild else None
@@ -454,6 +485,7 @@ class WelfareConfigView(View):
                 self.config,
                 self.target_message.guild if self.target_message else None,
                 editor_name=interaction.user.display_name if interaction else None,
+                claimed_count=self.claimed_count,
             ),
             view=WelfareClaimView(),
             allowed_mentions=discord.AllowedMentions(roles=True),
@@ -482,7 +514,12 @@ class WelfareConfigView(View):
         if self.target_message is None:
             self.target_message = await self.target_channel.send(
                 content=content,
-                embed=build_welfare_embed(self.config, guild, editor_name=interaction.user.display_name),
+                embed=build_welfare_embed(
+                    self.config,
+                    guild,
+                    editor_name=interaction.user.display_name,
+                    claimed_count=0,
+                ),
                 view=WelfareClaimView(),
                 allowed_mentions=discord.AllowedMentions(roles=True),
             )
@@ -530,9 +567,12 @@ class WelfareConfigView(View):
             role = interaction.guild.get_role(REGISTERED_ROLE_ID) if interaction.guild else None
             if role is not None:
                 content = role.mention
+        preview_count = 0
+        if self.target_message is not None:
+            preview_count = await count_claimed_welfare_users(self.target_message.id)
         await interaction.response.send_message(
             content=content,
-            embed=build_welfare_embed(self.config, interaction.guild),
+            embed=build_welfare_embed(self.config, interaction.guild, claimed_count=preview_count),
             view=WelfareClaimView(),
             ephemeral=True,
             allowed_mentions=discord.AllowedMentions(roles=True),
