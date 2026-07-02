@@ -345,7 +345,7 @@ class ProfileView(discord.ui.View):
             if getattr(child, "custom_id", None) in PROFILE_BUTTON_BASE_IDS:
                 child.custom_id = f"{child.custom_id}:{user_id}"
 
-    @discord.ui.button(label="👑 称号", style=discord.ButtonStyle.primary, emoji="🏷️", row=0, custom_id="town_profile_title")
+    @discord.ui.button(label="称号", style=discord.ButtonStyle.primary, emoji="🏷️", row=0, custom_id="town_profile_title")
     async def title_callback(self, button, interaction):
         if interaction.user.id != self.user_id:
             return await send_profile_refresh_prompt(
@@ -355,7 +355,7 @@ class ProfileView(discord.ui.View):
             )
         await open_title_panel(interaction, self.user_id)
 
-    @discord.ui.button(label="🎒 背包", style=discord.ButtonStyle.success, emoji="🎒", row=0, custom_id="town_profile_bag")
+    @discord.ui.button(label="背包", style=discord.ButtonStyle.success, emoji="🎒", row=0, custom_id="town_profile_bag")
     async def bag_callback(self, button, interaction):
         if interaction.user.id != self.user_id:
             return await send_profile_refresh_prompt(
