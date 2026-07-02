@@ -24,6 +24,7 @@ from app.db.repositories.casino_repo import (
     get_bank_account,
     get_casino_stats,
 )
+from app.features.casino import service as casino_service
 from app.db.repositories.user_repo import create_citizen, get_citizen, get_citizen_profile_summary, update_citizen_look, update_money
 from app.shared.data.shop_data import SHOP_ITEMS
 from app.shared.data.cat_data import generate_cat_identity
@@ -124,7 +125,7 @@ def format_buff_lines(active_buffs):
             buff_type,
         )
         end_at = datetime.fromisoformat(expires_at)
-        lines.append(f"{item_name} 到 `{end_at.strftime('%m-%d %H:%M')}`")
+        lines.append(f"{item_name} 到 `{casino_service.format_beijing_time(end_at, '%m-%d %H:%M')}`")
     return "\n".join(lines)
 
 
@@ -268,7 +269,7 @@ async def build_profile_panel(user: discord.abc.User, summary: dict):
     savings_balance = bank_account[2] if bank_account else 0
     sentence_text = "自由中"
     if sentence_end is not None:
-        sentence_text = f"服刑至 {sentence_end.strftime('%m-%d %H:%M')}"
+        sentence_text = f"服刑至 {casino_service.format_beijing_time(sentence_end, '%m-%d %H:%M')}"
     casino_lines = (
         f"赌博战绩：**{casino_stats[0]}胜 / {casino_stats[1]}负**\n"
         f"累计坐牢：**{casino_stats[2]}** 次\n"

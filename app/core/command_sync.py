@@ -26,6 +26,19 @@ def get_town_group_commands() -> list:
     ]
 
 
+def sanitize_command_options(command) -> None:
+    options = getattr(command, "options", None)
+    if options is not None:
+        command.options = [
+            option
+            for option in options
+            if getattr(option, "input_type", None) is not None
+        ]
+
+    for subcommand in getattr(command, "subcommands", []) or []:
+        sanitize_command_options(subcommand)
+
+
 def ensure_town_group_pending_synced(bot) -> bool:
     try:
         from app.cogs.gameplay.cat import TOWN_GROUP
@@ -33,6 +46,7 @@ def ensure_town_group_pending_synced(bot) -> bool:
         return False
     town_group_commands = get_town_group_commands()
     TOWN_GROUP.subcommands = list(town_group_commands)
+    sanitize_command_options(TOWN_GROUP)
 
     for pending_command in getattr(bot, "pending_application_commands", []):
         if getattr(pending_command, "name", None) != TOWN_GROUP.name:
@@ -40,6 +54,7 @@ def ensure_town_group_pending_synced(bot) -> bool:
         pending_command.subcommands = list(town_group_commands)
         for subcommand in pending_command.subcommands:
             subcommand.parent = pending_command
+        sanitize_command_options(pending_command)
         return True
     return False
 
@@ -88,6 +103,8 @@ def summarize_registered_commands(bot) -> list[str]:
 
 async def sync_and_log_commands(bot, logger, *, force: bool = True) -> None:
     ensure_town_group_pending_synced(bot)
+    for pending_command in getattr(bot, "pending_application_commands", []) or []:
+        sanitize_command_options(pending_command)
     logger.info("🧭 应用命令待同步快照开始")
     for line in summarize_pending_commands(bot):
         logger.info(f"   {line}")

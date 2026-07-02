@@ -29,7 +29,7 @@ def build_bank_embed(account):
     if locked_until_raw and savings > 0:
         locked_until = datetime.fromisoformat(locked_until_raw)
         if casino_service.get_utc_now() < locked_until:
-            savings_status = f"🔒 锁定至 {locked_until.strftime('%Y-%m-%d %H:%M')}"
+            savings_status = f"🔒 锁定至 {casino_service.format_beijing_time(locked_until)}"
 
     embed.add_field(name="🐷 定期账户", value=f"**{savings}** 喵币\n{savings_status}", inline=True)
     return embed
@@ -82,7 +82,7 @@ class TransactionModal(discord.ui.Modal):
                     )
                 if reason == "savings_locked":
                     return await interaction.response.send_message(
-                        f"🚫 定期存款仍在锁定中，将于 **{payload.strftime('%Y-%m-%d %H:%M')}** 解锁。",
+                        f"🚫 定期存款仍在锁定中，将于 **{casino_service.format_beijing_time(payload)}** 解锁。",
                         ephemeral=True,
                     )
                 return await interaction.response.send_message("🚫 取款失败，请稍后再试。", ephemeral=True)

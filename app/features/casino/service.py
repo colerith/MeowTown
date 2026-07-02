@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 from itertools import combinations
 
 
+BEIJING_TZ = timezone(timedelta(hours=8))
 SAVINGS_LOCK_DAYS = 7
 PLAYER_ROB_SUCCESS_BASE_RATE = 0.5
 PLAYER_ROB_SUCCESS_MIN_RATE = 0.1
@@ -40,6 +41,27 @@ POKER_HAND_NAMES = {
 }
 def get_utc_now():
     return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def get_beijing_now():
+    return datetime.now(BEIJING_TZ).replace(tzinfo=None)
+
+
+def get_beijing_today():
+    return get_beijing_now().date().isoformat()
+
+
+def utc_naive_to_beijing(dt: datetime | None):
+    if dt is None:
+        return None
+    return dt.replace(tzinfo=timezone.utc).astimezone(BEIJING_TZ).replace(tzinfo=None)
+
+
+def format_beijing_time(dt: datetime | None, fmt: str = "%Y-%m-%d %H:%M"):
+    if dt is None:
+        return ""
+    beijing_time = utc_naive_to_beijing(dt)
+    return beijing_time.strftime(fmt)
 
 
 def parse_positive_int(value):
@@ -243,7 +265,10 @@ __all__ = [
     "determine_player_robbery_loot",
     "format_remaining_minutes",
     "format_cards",
+    "format_beijing_time",
     "get_utc_now",
+    "get_beijing_now",
+    "get_beijing_today",
     "is_sentence_active",
     "parse_positive_int",
     "create_poker_deck",
@@ -254,4 +279,5 @@ __all__ = [
     "roll_dice_battle",
     "roll_guard_duel",
     "roll_slots",
+    "utc_naive_to_beijing",
 ]

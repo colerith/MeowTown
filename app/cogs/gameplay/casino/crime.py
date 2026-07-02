@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import random
-from datetime import date
 
 import discord
 from discord.ext import commands
@@ -165,12 +164,13 @@ class CrimePanelView(discord.ui.View):
             return await interaction.response.send_message("🟢 你现在是自由身，不需要贿赂守卫。", ephemeral=True)
 
         stats = await get_casino_stats(self.user_id)
-        bribes_today = stats[4] if stats[5] == date.today().isoformat() else 0
+        today = casino_service.get_beijing_today()
+        bribes_today = stats[4] if stats[5] == today else 0
         if bribes_today >= casino_service.MAX_BRIBES_PER_DAY:
             return await interaction.response.send_message("🚫 今天已经贿赂太多次了，守卫不再收钱。", ephemeral=True)
 
         cost = random.randint(1000, 10000)
-        success, reason, payload = await bribe_for_release(self.user_id, cost, date.today().isoformat())
+        success, reason, payload = await bribe_for_release(self.user_id, cost, today)
         if not success:
             if reason == "insufficient_wallet":
                 return await interaction.response.send_message(
