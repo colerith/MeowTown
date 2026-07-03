@@ -13,6 +13,7 @@ from app.db.repositories.casino_repo import (
     withdraw_from_account,
 )
 from app.features.casino import service as casino_service
+from app.features.economy.service import format_economy_notice
 
 
 BANK_IMAGE_URL = "https://i.postimg.cc/Xv1CSH62/image.png"
@@ -32,6 +33,7 @@ def build_bank_embed(account):
             savings_status = f"🔒 锁定至 {casino_service.format_beijing_time(locked_until)}"
 
     embed.add_field(name="🐷 定期账户", value=f"**{savings}** 喵币\n{savings_status}", inline=True)
+    embed.set_footer(text="取款时若金额过大，会先经过银行清算与财政喵审查，偶尔还会触发银行跑路抵债。")
     return embed
 
 
@@ -86,7 +88,10 @@ class TransactionModal(discord.ui.Modal):
                         ephemeral=True,
                     )
                 return await interaction.response.send_message("🚫 取款失败，请稍后再试。", ephemeral=True)
-            msg = f"💸 已取出 **{amount}** 喵币。"
+            msg = (
+                "💸 银行开始安排取款，清算部的肥猫们叼着算盘冲了出来。\n"
+                f"{format_economy_notice(payload).replace('镇长', '银行董事会').replace('财政喵', '清算喵').replace('市政猫砂税', '跑路抵债手续费')}"
+            )
 
         account = await get_bank_account(self.user_id)
         embed = build_bank_embed(account)

@@ -11,6 +11,7 @@ from app.db.repositories.ranking_repo import (
     get_top_property_owners,
     get_top_robbery_users,
 )
+from app.features.economy.service import format_economy_amount
 
 IMG_RANK = "https://i.postimg.cc/RCyR2z9z/ranking.png"
 
@@ -20,7 +21,7 @@ def build_medal(index: int):
 
 
 def format_amount(value):
-    return f"{float(value):.2f}"
+    return format_economy_amount(value)
 
 
 def format_rank_user(user_id, cat_name):

@@ -3,6 +3,7 @@ import datetime
 import aiosqlite
 
 from app.db.engine import DB_PATH
+from app.db.repositories.user_repo import apply_money_delta_with_db
 
 
 async def list_market_stocks():
@@ -29,7 +30,7 @@ async def buy_stock(user_id, stock_id, quantity, unit_price):
         if user_money < total_value:
             return False, user_money
 
-        await db.execute("UPDATE users SET money = money - ? WHERE user_id = ?", (total_value, user_id))
+        await apply_money_delta_with_db(db, user_id, -total_value, economy_mode="direct")
         await db.execute(
             """
             INSERT INTO portfolios (user_id, stock_id, quantity) VALUES (?, ?, ?)
@@ -62,9 +63,9 @@ async def sell_stock(user_id, stock_id, quantity, unit_price):
                 (new_quantity, user_id, stock_id),
             )
 
-        await db.execute("UPDATE users SET money = money + ? WHERE user_id = ?", (total_value, user_id))
+        summary = await apply_money_delta_with_db(db, user_id, total_value, economy_mode="gameplay")
         await db.commit()
-        return True, owned_quantity
+        return True, owned_quantity, summary
 
 
 async def get_loan_amount(user_id):
@@ -76,7 +77,7 @@ async def get_loan_amount(user_id):
 
 async def borrow_money(user_id, amount):
     async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("UPDATE users SET money = money + ? WHERE user_id = ?", (amount, user_id))
+        await apply_money_delta_with_db(db, user_id, amount, economy_mode="direct")
         await db.execute(
             """
             INSERT INTO loans (user_id, loan_amount) VALUES (?, ?)
@@ -89,7 +90,7 @@ async def borrow_money(user_id, amount):
 
 async def repay_loan(user_id, amount):
     async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("UPDATE users SET money = money - ? WHERE user_id = ?", (amount, user_id))
+        await apply_money_delta_with_db(db, user_id, -amount, economy_mode="direct")
         await db.execute("UPDATE loans SET loan_amount = loan_amount - ? WHERE user_id = ?", (amount, user_id))
         await db.commit()
 

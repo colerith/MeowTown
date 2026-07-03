@@ -1,6 +1,7 @@
 import aiosqlite
 
 from app.db.engine import DB_PATH
+from app.db.repositories.user_repo import apply_money_delta_with_db
 
 DEFAULT_PROPERTY_MAINTENANCE_INTERVAL = 7 * 24 * 60 * 60
 
@@ -97,7 +98,7 @@ async def upgrade_property(user_id, map_id, cost):
         if money < cost:
             return False, money
 
-        await db.execute("UPDATE users SET money = money - ? WHERE user_id = ?", (cost, user_id))
+        await apply_money_delta_with_db(db, user_id, -cost, economy_mode="direct")
         await db.execute("UPDATE monopoly_properties SET level = level + 1 WHERE map_id = ?", (map_id,))
         await db.commit()
         return True, money
@@ -122,7 +123,7 @@ async def move_player_with_pass_go(user_id, old_position, roll, map_size, pass_g
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("UPDATE monopoly_players SET position = ? WHERE user_id = ?", (new_position, user_id))
         if passed_go:
-            await db.execute("UPDATE users SET money = money + ? WHERE user_id = ?", (pass_go_salary, user_id))
+            await apply_money_delta_with_db(db, user_id, pass_go_salary, economy_mode="gameplay")
         await db.commit()
     return new_position, passed_go
 
@@ -131,8 +132,8 @@ async def pay_rent(user_id, owner_id, amount, map_id=None, clear_roadblock=False
     async with aiosqlite.connect(DB_PATH) as db:
         if clear_roadblock and map_id is not None:
             await db.execute("UPDATE monopoly_properties SET effect = NULL WHERE map_id = ?", (map_id,))
-        await db.execute("UPDATE users SET money = money - ? WHERE user_id = ?", (amount, user_id))
-        await db.execute("UPDATE users SET money = money + ? WHERE user_id = ?", (amount, owner_id))
+        await apply_money_delta_with_db(db, user_id, -amount, economy_mode="direct")
+        await apply_money_delta_with_db(db, owner_id, amount, economy_mode="gameplay")
         await db.commit()
 
 
@@ -150,7 +151,7 @@ async def buy_property(user_id, map_id, price):
 
         cursor = await db.execute("SELECT strftime('%s','now')")
         now_ts = int((await cursor.fetchone())[0])
-        await db.execute("UPDATE users SET money = money - ? WHERE user_id = ?", (price, user_id))
+        await apply_money_delta_with_db(db, user_id, -price, economy_mode="direct")
         await db.execute(
             """
             INSERT INTO monopoly_properties (map_id, owner_id, level, purchase_price, maintenance_due_at, maintenance_notice_sent)
@@ -180,7 +181,7 @@ async def maintain_all_properties(user_id, fee_per_property, next_due_at):
         if money < total_fee:
             return False, "insufficient", total_fee
 
-        await db.execute("UPDATE users SET money = money - ? WHERE user_id = ?", (total_fee, user_id))
+        await apply_money_delta_with_db(db, user_id, -total_fee, economy_mode="direct")
         await db.execute(
             """
             UPDATE monopoly_properties
@@ -201,7 +202,7 @@ async def pay_bail(user_id, bail_cost):
         if money < bail_cost:
             return False, money
 
-        await db.execute("UPDATE users SET money = money - ? WHERE user_id = ?", (bail_cost, user_id))
+        await apply_money_delta_with_db(db, user_id, -bail_cost, economy_mode="direct")
         await db.execute(
             "UPDATE monopoly_players SET status = 'normal', jail_turns_left = 0 WHERE user_id = ?",
             (user_id,),
@@ -286,7 +287,7 @@ async def reclaim_expired_properties(current_time, refund_ratio):
         for map_id, owner_id, purchase_price in rows:
             refund = round(float(purchase_price or 0) * refund_ratio, 2)
             if refund > 0:
-                await db.execute("UPDATE users SET money = money + ? WHERE user_id = ?", (refund, owner_id))
+                await apply_money_delta_with_db(db, owner_id, refund, economy_mode="gameplay")
             await db.execute("DELETE FROM monopoly_properties WHERE map_id = ?", (map_id,))
             reclaimed.append((map_id, owner_id, float(purchase_price or 0), refund))
         await db.commit()

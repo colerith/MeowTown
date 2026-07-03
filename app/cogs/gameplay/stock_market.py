@@ -23,6 +23,7 @@ from app.db.repositories.stock_repo import (
     update_stock_quote,
 )
 from app.db.repositories.user_repo import get_citizen, get_user_money, list_registered_user_ids
+from app.features.economy.service import format_economy_notice
 from app.features.stock_market.service import (
     format_market_trend,
     parse_positive_amount,
@@ -73,7 +74,7 @@ def get_guide_embed():
         ),
         inline=False,
     )
-    embed.set_footer(text="投资有风险，入市需谨慎 | 祝各位喵老板发大财！")
+    embed.set_footer(text="卖出获利会经过喵喵财政局的通胀整理，借款和还款按账面原值处理。")
     return embed
 
 
@@ -409,7 +410,7 @@ class TradeModal(Modal):
                 f"花费 **{total_value:.2f}** 喵币。"
             )
         else:
-            success, owned_quantity = await sell_stock(self.user_id, self.stock_id, amount, self.price)
+            success, owned_quantity, summary = await sell_stock(self.user_id, self.stock_id, amount, self.price)
             if not success:
                 return await interaction.response.send_message(
                     f"🚫 持仓不足！当前仅有 **{owned_quantity}** 股。",
@@ -417,7 +418,7 @@ class TradeModal(Modal):
                 )
             message = (
                 f"✅ 以 **{self.price:.2f}** 卖出 **{amount}** 股 **{self.stock_id}**，"
-                f"获得 **{total_value:.2f}** 喵币。"
+                f"开始结算卖出收益。\n{format_economy_notice(summary)}"
             )
 
         await interaction.response.send_message(message, ephemeral=True)

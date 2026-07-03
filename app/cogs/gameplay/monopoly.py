@@ -31,6 +31,7 @@ from app.db.repositories.monopoly_repo import (
     upgrade_property,
 )
 from app.db.repositories.user_repo import get_citizen, get_user_money, update_money
+from app.features.economy.service import format_economy_notice
 from app.features.monopoly.service import (
     build_status_text,
     calculate_property_rent,
@@ -100,6 +101,7 @@ async def render_game_embed(user_id, user_name, avatar_url, log_text=""):
         value=f"{maintenance_text}\n单块维护费: {PROPERTY_MAINTENANCE_FEE}",
         inline=False,
     )
+    embed.set_footer(text="路费、起点工资、事件奖金都会按新币制自动整理，镇长说这样城市通胀才不会把地价吹上月球。")
     
     return embed, player
 
@@ -297,7 +299,9 @@ class MonopolyDashboardView(View):
                 self.log += f"\n📜 **{event['text']}**"
                 if event['type'] == 'money':
                     val = event['value']
-                    await update_money(user_id, val)
+                    summary = await update_money(user_id, val)
+                    if val > 0:
+                        self.log += f"\n🐾 {format_economy_notice(summary)}"
                 
                 elif event['type'] == 'item':
                     await add_item(user_id, event['value'])
@@ -328,8 +332,8 @@ class MonopolyDashboardView(View):
                         await update_money(user_id, -total_amount)
                         self.log += f"\n📉 支付了 {total_amount:.2f} 维护费。"
                     else:
-                        await update_money(user_id, total_amount)
-                        self.log += f"\n📈 获得了 {total_amount:.2f} 收益。"
+                        summary = await update_money(user_id, total_amount)
+                        self.log += f"\n📈 获得地产收益。\n{format_economy_notice(summary)}"
 
         elif tile['type'] == 'tax':
             self.log += f"\n📉 缴纳税款 **{tile['fee']:.2f}**。"
@@ -409,11 +413,12 @@ class MonopolyDashboardView(View):
             return await interaction.response.send_message("🚫 暂时没有可维护的地产。", ephemeral=True)
 
         reward = random.randint(20, 180) * property_count
-        await update_money(self.user_id, reward)
+        summary = await update_money(self.user_id, reward)
         net_change = reward - total_fee
         self.log = (
             f"🛠️ 一键维护完成！共维护 {property_count} 块地产，花费 {total_fee:.2f} 喵币。"
-            f"\n🎁 维护时意外翻出 {reward:.2f} 喵币奖励，净变化 {net_change:.2f}。"
+            f"\n🎁 维护时意外翻出奖励，净变化 {net_change:.2f}。"
+            f"\n{format_economy_notice(summary)}"
         )
         await self.refresh_ui(interaction)
 

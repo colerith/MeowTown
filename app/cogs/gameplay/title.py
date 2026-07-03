@@ -9,6 +9,7 @@ from app.db.repositories.title_repo import (
     unlock_title,
 )
 from app.db.repositories.user_repo import get_citizen, update_money
+from app.features.economy.service import format_economy_notice
 from app.shared.data.title_data import RARITY_CONFIG, TITLES, TITLE_DRAW_COST, draw_random_title
 
 TITLE_IMAGE = "https://i.postimg.cc/4dFbg1Qj/title.png"
@@ -93,13 +94,14 @@ class TitlePanelView(View):
 
         embed = discord.Embed(title="🎰 称号扭蛋机", color=rarity_info["color"])
         embed.set_image(url=TITLE_IMAGE)
+        embed.set_footer(text="高额返现同样会经过喵喵财政局的通胀整理。")
 
         if is_owned:
             refund = int(TITLE_DRAW_COST / 2)
-            await update_money(self.user_id, refund)
+            refund_summary = await update_money(self.user_id, refund)
             embed.description = (
                 f"你抽到了：**【{title_data['name']}】** ({rarity_info['name']})\n\n"
-                f"😕 已经拥有该称号，系统退还 **{refund}** 喵币。"
+                f"😕 已经拥有该称号，系统开始退币。\n{format_economy_notice(refund_summary)}"
             )
         else:
             await unlock_title(self.user_id, tid)

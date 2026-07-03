@@ -23,6 +23,7 @@ from app.db.repositories.farm_repo import (
 )
 from app.db.repositories.inventory_repo import add_item, get_items, use_item_from_db
 from app.db.repositories.user_repo import get_citizen, update_money
+from app.features.economy.service import format_economy_notice
 from app.shared.data.farm_data import (
     FARM_FERTILIZERS,
     FARM_GUARDS,
@@ -160,8 +161,7 @@ async def render_farm_embed(user_id, user_name, avatar_url):
         footer_text += f" | 下块地: {next_price}喵币"
     else:
         footer_text += " | 土地已满"
-
-    embed.set_footer(text=footer_text)
+    embed.set_footer(text=f"{footer_text} | 大丰收会先经过财政喵记账，避免菜价把小镇冲成热气球。")
     if guard:
         guard_type, expires_at = guard
         guard_info = FARM_GUARDS.get(guard_type)
@@ -571,8 +571,11 @@ class FarmDashboardView(View):
                     await clear_plot(self.user_id, row[1])
         
         if total_income > 0:
-            await update_money(self.user_id, total_income)
-            await interaction.followup.send(f"💰 收获了: {', '.join(harvested)}\n一共卖出 **{total_income}** 喵币！", ephemeral=True)
+            summary = await update_money(self.user_id, total_income)
+            await interaction.followup.send(
+                f"💰 收获了: {', '.join(harvested)}\n开始结算菜摊收入。\n{format_economy_notice(summary)}",
+                ephemeral=True,
+            )
             await self.safe_refresh_message(interaction.message)
         else:
             await interaction.followup.send("🚫 没有成熟的作物。", ephemeral=True)
@@ -725,9 +728,9 @@ class FarmDashboardView(View):
         if random.random() > 0.4:
             income = int(calculate_harvest(plant_id) * 0.8)
             await clear_plot(target_user_id, target_plot[1])
-            await update_money(self.user_id, income)
+            summary = await update_money(self.user_id, income)
             await record_farm_steal_result(self.user_id, success=True, income=income)
-            return f"😈 你偷到了 **{target.display_name}** 的 **{plant['name']}**！卖了 **{income}** 喵币。"
+            return f"😈 你偷到了 **{target.display_name}** 的 **{plant['name']}**！\n{format_economy_notice(summary)}"
 
         fine = 200
         await update_money(self.user_id, -fine)

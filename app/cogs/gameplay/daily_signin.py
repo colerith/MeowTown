@@ -17,6 +17,7 @@ from app.db.repositories.inventory_repo import add_item
 from app.db.repositories.stock_repo import grant_stock_shares
 from app.db.repositories.title_repo import check_title_owned, unlock_title
 from app.db.repositories.user_repo import get_citizen, update_money
+from app.features.economy.service import format_economy_notice
 from app.shared.data.farm_data import FARM_GUARDS, PLANTS
 from app.shared.data.shop_data import SHOP_ITEMS
 from app.shared.data.stock_data import STOCKS
@@ -129,6 +130,11 @@ async def build_checkin_embed():
         value="偶尔会触发股市、农场、称号联动奖励，例如股票、化肥、种子、护卫、稀有称号等。",
         inline=False,
     )
+    embed.add_field(
+        name="🐾 新币制说明",
+        value="高额收益会经过喵喵财政局的通胀整理，小额签到通常原样入账，巨额暴富会被镇长顺爪薅一点。",
+        inline=False,
+    )
     embed.add_field(name="今日签到人数", value=f"**{today_count}** 位镇民", inline=True)
     embed.add_field(name="当前日期", value=f"**{today}**", inline=True)
     embed.set_footer(text=f"最后刷新: {now_text} | 每日 0 点后可再次签到（北京时间）")
@@ -154,8 +160,8 @@ async def apply_bonus_event(user_id):
 
     if event_type == "money":
         extra = random.randint(1000, 500000)
-        await update_money(user_id, extra)
-        return f"💰 附加事件：额外获得 **{extra}** 喵币。"
+        summary = await update_money(user_id, extra)
+        return f"💰 附加事件：额外获得奖励。\n{format_economy_notice(summary)}"
 
     if event_type == "stock":
         stock_id = random.choice(list(STOCKS.keys()))
@@ -177,8 +183,8 @@ async def apply_bonus_event(user_id):
                 await unlock_title(user_id, title_id)
                 return f"👑 附加事件：解锁稀有称号 **【{TITLES[title_id]['name']}】**。"
         fallback = random.randint(5000, 50000)
-        await update_money(user_id, fallback)
-        return f"👑 附加事件：称号库里你运气太好了都快拿满了，改为补发 **{fallback}** 喵币。"
+        summary = await update_money(user_id, fallback)
+        return f"👑 附加事件：称号库里你运气太好了都快拿满了，改为补发奖励。\n{format_economy_notice(summary)}"
 
     if event_type == "guard":
         guard_type = random.choice(list(FARM_GUARDS.keys()))
@@ -203,8 +209,8 @@ async def apply_bonus_event(user_id):
             await plant_seed(user_id, empty_plots[0], plant_id, int(datetime.datetime.now().timestamp()))
             return f"🌱 附加事件：系统赠送了一株 **{plant['name']}** 并帮你种在了空地上。"
         fallback = plant["cost"] * 3
-        await update_money(user_id, fallback)
-        return f"🌱 附加事件：原本想送你 **{plant['name']}**，但农场没空地了，改发 **{fallback}** 喵币。"
+        summary = await update_money(user_id, fallback)
+        return f"🌱 附加事件：原本想送你 **{plant['name']}**，但农场没空地了，改发补偿。\n{format_economy_notice(summary)}"
 
     return None
 
@@ -234,8 +240,8 @@ class DailySigninView(View):
             return await interaction.response.send_message("📌 你今天已经签到过了，明天再来吧。", ephemeral=True)
 
         base_reward, reward_tier = roll_signin_reward()
-        await update_money(interaction.user.id, base_reward)
-        await record_daily_signin(interaction.user.id, today, base_reward)
+        summary = await update_money(interaction.user.id, base_reward)
+        await record_daily_signin(interaction.user.id, today, summary["applied_delta"])
 
         bonus_message = None
         if random.random() < 0.35:
@@ -243,7 +249,8 @@ class DailySigninView(View):
 
         embed = discord.Embed(title="✅ 签到成功", color=0x2ECC71)
         embed.description = (
-            f"你今天的基础签到奖励是 **{base_reward}** 喵币。\n"
+            f"你今天的基础签到奖励已经送达。\n"
+            f"{format_economy_notice(summary)}\n"
             f"{reward_tier['message']}"
         )
         embed.add_field(

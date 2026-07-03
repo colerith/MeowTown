@@ -261,6 +261,18 @@ async def setup_db():
 			)
 			"""
 		)
+		await db.execute(
+			"""
+			CREATE TABLE IF NOT EXISTS economy_rebase_logs (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				executed_at TEXT NOT NULL,
+				operator_user_id INTEGER,
+				changed_rows INTEGER DEFAULT 0,
+				total_before INTEGER DEFAULT 0,
+				total_after INTEGER DEFAULT 0
+			)
+			"""
+		)
 
 		try:
 			await db.execute("ALTER TABLE users ADD COLUMN active_title TEXT")

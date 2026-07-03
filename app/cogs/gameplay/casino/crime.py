@@ -25,6 +25,7 @@ from app.db.repositories.casino_repo import (
 )
 from app.db.repositories.user_repo import get_citizen, update_money
 from app.features.casino import service as casino_service
+from app.features.economy.service import format_economy_notice
 
 
 ROB_IMAGE_URL = "https://i.postimg.cc/hGtdYF6z/image.png"
@@ -58,6 +59,7 @@ async def build_crime_embed(user_id: int, user_name: str):
         ),
         inline=False,
     )
+    embed.set_footer(text="黑市高额赃款会先经过财政喵审查，镇长偶尔会以治安经费名义抽走一爪。")
     return embed
 
 
@@ -103,13 +105,14 @@ async def resolve_robbery_against_target(interaction: discord.Interaction, robbe
 
     if random.random() < success_rate:
         loot = casino_service.determine_player_robbery_loot(victim_wallet)
-        await transfer_money_between_users(target.id, robber_id, loot)
+        _sender_summary, receiver_summary = await transfer_money_between_users(target.id, robber_id, loot)
         await record_player_robbery_success(robber_id, loot, today=today)
         embed = discord.Embed(title="🔫 打劫成功", color=0x2ECC71)
         embed.set_image(url=ROB_IMAGE_URL)
         embed.description = (
-            f"你从 **{target.display_name}** 身上抢到了 **{loot}** 喵币。\n"
-            f"本次成功率约 **{success_rate * 100:.0f}%**。"
+            f"你从 **{target.display_name}** 身上抢到一笔赃款。\n"
+            f"本次成功率约 **{success_rate * 100:.0f}%**。\n"
+            f"{format_economy_notice(receiver_summary)}"
         )
         return await interaction.response.send_message(embed=embed, ephemeral=True)
 
@@ -202,10 +205,13 @@ class CrimePanelView(discord.ui.View):
         if random.random() < casino_service.BANK_ROB_SUCCESS_RATE:
             bank_pool = await get_total_bank_pool()
             loot = casino_service.determine_bank_robbery_loot(BANK_VAULT_BASE + bank_pool)
-            await apply_bank_robbery_success(self.user_id, loot, today=today)
+            summary = await apply_bank_robbery_success(self.user_id, loot, today=today)
             embed = discord.Embed(title="🏦💥 银行大劫案成功", color=0xF1C40F)
             embed.set_image(url=ROB_IMAGE_URL)
-            embed.description = f"你成功卷走 **{loot}** 喵币，银行活期账户统一承受了 2% 损耗。"
+            embed.description = (
+                "你成功卷走一大包赃款，银行活期账户统一承受了 2% 损耗。\n"
+                f"{format_economy_notice(summary)}"
+            )
             return await interaction.response.send_message(embed=embed, ephemeral=True)
 
         wallet_after_attempt, _thief_level = await get_wallet_and_level(self.user_id)

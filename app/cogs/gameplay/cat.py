@@ -24,7 +24,13 @@ from app.db.repositories.casino_repo import (
     get_bank_account,
     get_casino_stats,
 )
+from app.db.repositories.economy_repo import (
+    apply_economy_rebase,
+    get_economy_snapshot,
+    get_latest_economy_rebase_log,
+)
 from app.features.casino import service as casino_service
+from app.features.economy.service import ECONOMY_SOFT_CAP, format_economy_amount
 from app.db.repositories.user_repo import create_citizen, get_citizen, get_citizen_profile_summary, update_citizen_look, update_money
 from app.shared.data.shop_data import SHOP_ITEMS
 from app.shared.data.cat_data import generate_cat_identity
@@ -66,12 +72,7 @@ def build_progress_bar(current_value, total_value, length=10):
 
 
 def format_large_number(value):
-    abs_value = abs(float(value))
-    if abs_value >= 100000000:
-        return f"{value / 100000000:.2f}亿"
-    if abs_value >= 10000:
-        return f"{value / 10000:.2f}万"
-    return f"{value:.2f}"
+    return format_economy_amount(value)
 
 
 def pick_profile_color(level):
@@ -560,6 +561,97 @@ class Cat(commands.Cog):
         await ctx.defer(ephemeral=True)
         view = CompensationConfigView()
         await ctx.followup.send(embed=view.build_preview_embed(), view=view, ephemeral=True)
+
+    @citizen.command(
+        name="经济换算",
+        description="【仅限管理员】预览或执行一次全服金额重估",
+        default_member_permissions=ADMIN_ONLY_PERMISSIONS,
+    )
+    @commands.is_owner()
+    async def economy_rebase(
+        self,
+        ctx: discord.ApplicationContext,
+        执行: discord.Option(bool, "是否正式执行全服金额重估", default=False),
+    ):
+        await ctx.defer(ephemeral=True)
+        snapshot = await get_economy_snapshot()
+        latest_log = await get_latest_economy_rebase_log()
+
+        embed = discord.Embed(title="💱 喵喵小镇经济换算", color=0xF39C12)
+        embed.description = (
+            "这套机制会保留普通玩家的小额资产，"
+            "并通过阶梯税制削弱高额收益造成的通胀，"
+            "把生态拉回可玩的区间。"
+        )
+        embed.add_field(
+            name="当前快照",
+            value=(
+                f"居民数：**{snapshot['user_count']}**\n"
+                f"现金峰值：**{format_economy_amount(snapshot['max_money'])}** 喵币\n"
+                f"现金总量：**{format_economy_amount(snapshot['total_money'])}** 喵币\n"
+                f"超过软上限：**{snapshot['over_soft_cap']}** 人"
+            ),
+            inline=False,
+        )
+        embed.add_field(
+            name="换算规则",
+            value=(
+                f"存量资产重估时会参考 **{format_economy_amount(ECONOMY_SOFT_CAP)}** 软上限；\n"
+                "日常收益则改走阶梯税制，高收入喵会多交一点，但仍保留大头收益。"
+            ),
+            inline=False,
+        )
+
+        preview_lines = []
+        for index, row in enumerate(snapshot["top_users"], start=1):
+            user_id, cat_name, before_amount, after_amount = row
+            preview_lines.append(
+                f"`{index}.` <@{user_id}> / {cat_name}："
+                f"{format_economy_amount(before_amount)} → {format_economy_amount(after_amount)}"
+            )
+        embed.add_field(
+            name="富豪榜预估变化",
+            value="\n".join(preview_lines) if preview_lines else "暂无居民数据。",
+            inline=False,
+        )
+
+        if latest_log is not None:
+            embed.add_field(
+                name="最近一次执行记录",
+                value=(
+                    f"时间：`{latest_log['executed_at']}`\n"
+                    f"变更行数：**{latest_log['changed_rows']}**\n"
+                    f"总量变化：**{format_economy_amount(latest_log['total_before'])}**"
+                    f" → **{format_economy_amount(latest_log['total_after'])}**"
+                ),
+                inline=False,
+            )
+
+        if not 执行:
+            embed.set_footer(text="当前为预览模式；如需正式执行，请将“执行”选项设为 true。")
+            return await ctx.followup.send(
+                embed=embed,
+                ephemeral=True,
+                allowed_mentions=discord.AllowedMentions.none(),
+            )
+
+        result = await apply_economy_rebase(ctx.author.id)
+        embed.color = 0x2ECC71
+        embed.add_field(
+            name="执行结果",
+            value=(
+                f"已更新数据行：**{result['changed_rows']}**\n"
+                f"换算前总量：**{format_economy_amount(result['total_before'])}**\n"
+                f"换算后总量：**{format_economy_amount(result['total_after'])}**"
+            ),
+            inline=False,
+        )
+        embed.set_footer(text="经济换算已执行完成，建议随后手动查看排行榜、档案和银行面板。")
+        await ctx.followup.send(
+            embed=embed,
+            ephemeral=True,
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
 
     @citizen.command(
         name="重置股市",

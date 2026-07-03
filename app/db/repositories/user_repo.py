@@ -3,6 +3,10 @@ import math
 import aiosqlite
 
 from app.db.engine import DB_PATH
+from app.features.economy.service import (
+    build_economy_delta_summary,
+    calculate_progressive_gain,
+)
 
 
 LEVEL_SCORE_FACTOR = 120
@@ -60,16 +64,20 @@ def clamp_money_value(value):
     return max(0, min(SQLITE_INT64_MAX, int(numeric_value)))
 
 
-async def apply_money_delta_with_db(db, user_id, amount):
+async def apply_money_delta_with_db(db, user_id, amount, *, economy_mode="gameplay"):
     cursor = await db.execute("SELECT money FROM users WHERE user_id = ?", (user_id,))
     row = await cursor.fetchone()
     if row is None:
         return None
 
     current_money = clamp_money_value(row[0] or 0)
-    new_money = clamp_money_value(current_money + int(amount))
+    raw_amount = int(amount)
+    applied_amount = raw_amount
+    if raw_amount > 0 and economy_mode == "gameplay":
+        applied_amount = calculate_progressive_gain(current_money, raw_amount)
+    new_money = clamp_money_value(current_money + applied_amount)
     await db.execute("UPDATE users SET money = ? WHERE user_id = ?", (new_money, user_id))
-    return new_money
+    return build_economy_delta_summary(current_money, raw_amount, applied_amount)
 
 
 async def _fetch_profile_stats(db, user_id):
@@ -180,11 +188,12 @@ async def update_citizen_name(user_id, name):
         await db.commit()
 
 
-async def update_money(user_id, amount):
+async def update_money(user_id, amount, *, economy_mode="gameplay"):
     async with aiosqlite.connect(DB_PATH) as db:
-        await apply_money_delta_with_db(db, user_id, amount)
+        summary = await apply_money_delta_with_db(db, user_id, amount, economy_mode=economy_mode)
         await _sync_citizen_level_with_db(db, user_id)
         await db.commit()
+        return summary
 
 
 async def set_user_status(user_id, status):

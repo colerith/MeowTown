@@ -178,13 +178,13 @@ async def withdraw_from_account(user_id, amount, account_type, now=None):
             if now < locked_until:
                 return False, "savings_locked", locked_until
 
-        await apply_money_delta_with_db(db, user_id, amount)
+        summary = await apply_money_delta_with_db(db, user_id, amount, economy_mode="gameplay")
         await db.execute(
             f"UPDATE casino_bank_accounts SET {target_col} = {target_col} - ? WHERE user_id = ?",
             (amount, user_id),
         )
         await db.commit()
-        return True, "ok", balance
+        return True, "ok", summary
 
 
 async def get_casino_stats(user_id):
@@ -320,7 +320,7 @@ async def apply_game_result(user_id, money_delta, win=False, loss=False):
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         await _ensure_casino_rows(db, user_id)
-        await apply_money_delta_with_db(db, user_id, money_delta)
+        summary = await apply_money_delta_with_db(db, user_id, money_delta, economy_mode="gameplay")
         if win:
             await db.execute(
                 "UPDATE casino_game_stats SET wins = wins + 1 WHERE user_id = ?",
@@ -332,6 +332,7 @@ async def apply_game_result(user_id, money_delta, win=False, loss=False):
                 (user_id,),
             )
         await db.commit()
+        return summary
 
 
 async def get_active_sentence_end(user_id):
@@ -450,9 +451,10 @@ async def bribe_for_release(user_id, cost, today):
 async def transfer_money_between_users(from_user_id, to_user_id, amount):
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
-        await apply_money_delta_with_db(db, from_user_id, -amount)
-        await apply_money_delta_with_db(db, to_user_id, amount)
+        sender_summary = await apply_money_delta_with_db(db, from_user_id, -amount, economy_mode="direct")
+        receiver_summary = await apply_money_delta_with_db(db, to_user_id, amount, economy_mode="gameplay")
         await db.commit()
+        return sender_summary, receiver_summary
 
 
 async def apply_bank_robbery_success(user_id, loot, today=None):
@@ -476,7 +478,7 @@ async def apply_bank_robbery_success(user_id, loot, today=None):
                 robberies_today = 0
                 robbery_successes_today = 0
                 guard_duels_today = 0
-        await apply_money_delta_with_db(db, user_id, loot)
+        summary = await apply_money_delta_with_db(db, user_id, loot, economy_mode="gameplay")
         await db.execute(
             """
             UPDATE casino_crime_stats
@@ -505,6 +507,7 @@ async def apply_bank_robbery_success(user_id, loot, today=None):
             """
         )
         await db.commit()
+        return summary
 
 
 async def record_player_robbery_success(user_id, loot, today=None):

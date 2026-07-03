@@ -16,6 +16,7 @@ from app.db.repositories.casino_repo import (
 )
 from app.db.repositories.user_repo import get_citizen
 from app.features.casino import service as casino_service
+from app.features.economy.service import format_economy_notice
 
 
 SLOT_IMAGE_URL = "https://i.postimg.cc/t4Dv4KDt/slot.png"
@@ -112,7 +113,7 @@ async def build_gambling_embed(user_id: int, user_name: str):
         ),
         inline=False,
     )
-    embed.set_footer(text="按钮版娱乐城已并入市民档案，不再单独走 slash 指令。")
+    embed.set_footer(text="高额赢钱会触发喵喵财政局的通胀整理，镇长偶尔会顺爪抽成。")
     return embed
 
 
@@ -226,11 +227,11 @@ class RussianRouletteView(discord.ui.View):
             embed.description = f"💥 枪响了，你本轮失去 **{self.bet}** 喵币。"
             embed.color = discord.Color.red()
         else:
-            await apply_game_result(self.user_id, self.winnings, win=True)
+            summary = await apply_game_result(self.user_id, self.winnings, win=True)
             if cashed_out:
-                embed.description = f"🏃 你及时收手，带走 **{self.winnings}** 喵币。"
+                embed.description = f"🏃 你及时收手，开始结算。\n{format_economy_notice(summary)}"
             else:
-                embed.description = f"🎉 你硬生生撑到了最后，卷走 **{self.winnings}** 喵币。"
+                embed.description = f"🎉 你硬生生撑到了最后，开始结算。\n{format_economy_notice(summary)}"
             embed.color = discord.Color.green()
 
         await interaction.response.edit_message(embed=embed, view=self)
@@ -290,8 +291,8 @@ class BlackJackView(discord.ui.View):
         if result == "win":
             multiplier = await get_buff_bonus_multiplier(self.user_id)
             reward = int(self.bet * multiplier)
-            await apply_game_result(self.user_id, reward, win=True)
-            embed = self._embed(f"🎉 你赢了，结算 **{reward}** 喵币。", reveal_dealer=True, color=discord.Color.green())
+            summary = await apply_game_result(self.user_id, reward, win=True)
+            embed = self._embed(f"🎉 你赢了，开始结算。\n{format_economy_notice(summary)}", reveal_dealer=True, color=discord.Color.green())
         elif result == "loss":
             await apply_game_result(self.user_id, -self.bet, loss=True)
             embed = self._embed(f"💸 你输了，本轮失去 **{self.bet}** 喵币。", reveal_dealer=True, color=discord.Color.red())
@@ -368,8 +369,8 @@ class GamblingPanelView(discord.ui.View):
             multiplier = await get_buff_bonus_multiplier(self.user_id)
             boosted_payout = int(payout * multiplier)
             delta = boosted_payout - bet
-            await apply_game_result(self.user_id, delta, win=True)
-            embed.description = f"🎉 命中奖励！基础奖金 **{payout}**，增益后结算 **{boosted_payout}**，净赚 **{delta}**。"
+            summary = await apply_game_result(self.user_id, delta, win=True)
+            embed.description = f"🎉 命中奖励！基础奖金 **{payout}**，增益后结算 **{boosted_payout}**。\n{format_economy_notice(summary)}"
         else:
             await apply_game_result(self.user_id, -bet, loss=True)
             embed.description = f"💸 这轮没有中奖，失去 **{bet}** 喵币。"
@@ -393,8 +394,8 @@ class GamblingPanelView(discord.ui.View):
         if player_score > dealer_score:
             multiplier = await get_buff_bonus_multiplier(self.user_id)
             reward = int(bet * multiplier)
-            await apply_game_result(self.user_id, reward, win=True)
-            embed.description = f"👑 你赢了！按当前增益结算，本轮获得 **{reward}** 喵币。"
+            summary = await apply_game_result(self.user_id, reward, win=True)
+            embed.description = f"👑 你赢了！按当前增益开始结算。\n{format_economy_notice(summary)}"
         elif player_score < dealer_score:
             await apply_game_result(self.user_id, -bet, loss=True)
             embed.description = f"💸 庄家收走了你的 **{bet}** 喵币。"
@@ -421,8 +422,8 @@ class GamblingPanelView(discord.ui.View):
         if round_data["player_rank"] > round_data["dealer_rank"]:
             multiplier = await get_buff_bonus_multiplier(self.user_id)
             reward = int(bet * multiplier)
-            await apply_game_result(self.user_id, reward, win=True)
-            embed.description = f"🎉 你用 **{round_data['player_name']}** 击败庄家，赢得 **{reward}** 喵币。"
+            summary = await apply_game_result(self.user_id, reward, win=True)
+            embed.description = f"🎉 你用 **{round_data['player_name']}** 击败庄家，奖励开始结算。\n{format_economy_notice(summary)}"
             embed.color = discord.Color.green()
         elif round_data["player_rank"] < round_data["dealer_rank"]:
             await apply_game_result(self.user_id, -bet, loss=True)
