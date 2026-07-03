@@ -5,6 +5,7 @@ from datetime import datetime
 import aiosqlite
 
 from app.db.engine import DB_PATH
+from app.db.repositories.user_repo import SQLITE_INT64_MAX
 from app.features.economy.service import ECONOMY_SOFT_CAP, revalue_amount
 
 
@@ -17,6 +18,19 @@ MONEY_TABLE_COLUMNS = {
     "farm_theft_stats": ("steal_income_total",),
     "daily_signins": ("last_reward",),
 }
+
+
+def _safe_numeric_to_int(value) -> int:
+    if value is None:
+        return 0
+    return int(round(float(value)))
+
+
+def _sqlite_log_value(value):
+    safe_value = _safe_numeric_to_int(value)
+    if abs(safe_value) > SQLITE_INT64_MAX:
+        return str(safe_value)
+    return safe_value
 
 
 async def get_economy_snapshot(limit=10):
@@ -39,27 +53,36 @@ async def get_economy_snapshot(limit=10):
         cursor = await db.execute(
             """
             SELECT
-                COUNT(*) AS user_count,
-                COALESCE(MAX(money), 0) AS max_money,
-                COALESCE(SUM(money), 0) AS total_money,
-                COALESCE(SUM(CASE WHEN money > ? THEN 1 ELSE 0 END), 0) AS over_soft_cap
+                user_id,
+                cat_name,
+                COALESCE(money, 0) AS money
             FROM users
+            ORDER BY user_id ASC
             """
-            ,
-            (ECONOMY_SOFT_CAP,),
         )
-        totals = await cursor.fetchone()
+        all_users = await cursor.fetchall()
+
+        max_money = 0
+        total_money = 0
+        over_soft_cap = 0
+        for row in all_users:
+            money_value = _safe_numeric_to_int(row["money"])
+            if money_value > max_money:
+                max_money = money_value
+            total_money += money_value
+            if money_value > ECONOMY_SOFT_CAP:
+                over_soft_cap += 1
 
         return {
-            "user_count": int(totals["user_count"] or 0),
-            "max_money": int(round(float(totals["max_money"] or 0))),
-            "total_money": int(round(float(totals["total_money"] or 0))),
-            "over_soft_cap": int(totals["over_soft_cap"] or 0),
+            "user_count": len(all_users),
+            "max_money": max_money,
+            "total_money": total_money,
+            "over_soft_cap": over_soft_cap,
             "top_users": [
                 (
                     int(row["user_id"]),
                     row["cat_name"],
-                    int(round(float(row["money"] or 0))),
+                    _safe_numeric_to_int(row["money"]),
                     revalue_amount(row["money"] or 0),
                 )
                 for row in top_users
@@ -94,7 +117,7 @@ async def apply_economy_rebase(operator_user_id: int | None = None):
 
                 for column in columns:
                     before_value = row[column] or 0
-                    before_int = int(round(float(before_value)))
+                    before_int = _safe_numeric_to_int(before_value)
                     after_int = revalue_amount(before_value)
                     total_before += before_int
                     total_after += after_int
@@ -123,8 +146,8 @@ async def apply_economy_rebase(operator_user_id: int | None = None):
                 datetime.utcnow().isoformat(timespec="seconds"),
                 operator_user_id,
                 changed_rows,
-                total_before,
-                total_after,
+                _sqlite_log_value(total_before),
+                _sqlite_log_value(total_after),
             ),
         )
         await db.commit()
@@ -154,8 +177,8 @@ async def get_latest_economy_rebase_log():
             "executed_at": row["executed_at"],
             "operator_user_id": row["operator_user_id"],
             "changed_rows": int(row["changed_rows"] or 0),
-            "total_before": int(row["total_before"] or 0),
-            "total_after": int(row["total_after"] or 0),
+            "total_before": _safe_numeric_to_int(row["total_before"]),
+            "total_after": _safe_numeric_to_int(row["total_after"]),
         }
 
 
