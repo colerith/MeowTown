@@ -309,16 +309,21 @@ async def _maybe_apply_global_rebase_with_db(db, source: str):
 
 
 async def maybe_apply_auto_economy_guard_with_db(db, *, user_id: int | None = None, source: str = "unknown"):
-    events = []
-    if user_id is not None:
-        personal_result = await _maybe_apply_personal_rebase_with_db(db, user_id, source)
-        if personal_result is not None:
-            events.append(personal_result)
+    original_row_factory = getattr(db, "row_factory", None)
+    db.row_factory = aiosqlite.Row
+    try:
+        events = []
+        if user_id is not None:
+            personal_result = await _maybe_apply_personal_rebase_with_db(db, user_id, source)
+            if personal_result is not None:
+                events.append(personal_result)
 
-    global_result = await _maybe_apply_global_rebase_with_db(db, source)
-    if global_result is not None:
-        events.append(global_result)
-    return events
+        global_result = await _maybe_apply_global_rebase_with_db(db, source)
+        if global_result is not None:
+            events.append(global_result)
+        return events
+    finally:
+        db.row_factory = original_row_factory
 
 
 async def maybe_apply_global_economy_guard(source: str = "startup"):
