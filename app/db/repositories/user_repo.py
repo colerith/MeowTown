@@ -4,6 +4,7 @@ import aiosqlite
 
 from app.db.engine import DB_PATH
 from app.features.economy.service import (
+    ECONOMY_AUTO_USER_TRIGGER,
     build_economy_delta_summary,
     calculate_progressive_gain,
 )
@@ -77,7 +78,24 @@ async def apply_money_delta_with_db(db, user_id, amount, *, economy_mode="gamepl
         applied_amount = calculate_progressive_gain(current_money, raw_amount)
     new_money = clamp_money_value(current_money + applied_amount)
     await db.execute("UPDATE users SET money = ? WHERE user_id = ?", (new_money, user_id))
-    return build_economy_delta_summary(current_money, raw_amount, applied_amount)
+
+    from app.db.repositories.economy_repo import maybe_apply_auto_economy_guard_with_db
+
+    auto_rebase_events = []
+    if raw_amount > 0 or new_money >= ECONOMY_AUTO_USER_TRIGGER:
+        auto_rebase_events = await maybe_apply_auto_economy_guard_with_db(
+            db,
+            user_id=user_id,
+            source=f"money_delta:{economy_mode}",
+        )
+    cursor = await db.execute("SELECT money FROM users WHERE user_id = ?", (user_id,))
+    final_row = await cursor.fetchone()
+    final_money = clamp_money_value(final_row[0] or 0) if final_row else new_money
+
+    summary = build_economy_delta_summary(current_money, raw_amount, applied_amount)
+    summary["after_balance"] = final_money
+    summary["auto_rebase_events"] = auto_rebase_events
+    return summary
 
 
 async def _fetch_profile_stats(db, user_id):

@@ -3,6 +3,7 @@ from discord.ext import commands
 
 from app.core.command_sync import sync_and_log_commands
 from app.db.engine import setup_db
+from app.db.repositories.economy_repo import maybe_apply_global_economy_guard
 from app.db.repositories.user_repo import sync_all_citizen_levels
 
 
@@ -24,10 +25,18 @@ def register_lifecycle_events(bot: discord.Bot, logger, owner_ids: list[int]) ->
             logger.info("💾 正在连接数据库...")
             await setup_db()
             synced_count = await sync_all_citizen_levels()
+            auto_guard_result = await maybe_apply_global_economy_guard(source="startup_ready")
             if getattr(bot, "db_ready_event", None):
                 bot.db_ready_event.set()
             logger.info("✅ 数据库连接成功，表结构已更新。")
             logger.info(f"📊 市民等级同步完成，共处理 {synced_count} 位市民。")
+            if auto_guard_result is not None:
+                logger.warning(
+                    "🌐 启动阶段自动经济熔断已执行 | before=%s | after=%s | changed_rows=%s",
+                    auto_guard_result["total_before"],
+                    auto_guard_result["total_after"],
+                    auto_guard_result["changed_rows"],
+                )
         except Exception as exc:
             logger.critical(f"🔥 数据库初始化失败: {exc}")
 

@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 import aiosqlite
 
 from app.db.engine import DB_PATH
+from app.db.repositories.economy_repo import maybe_apply_auto_economy_guard_with_db
 from app.db.repositories.user_repo import apply_money_delta_with_db, clamp_money_value
 from app.features.casino.service import get_utc_now
 
@@ -147,8 +148,13 @@ async def deposit_to_account(user_id, amount, account_type, locked_until=None):
                 "UPDATE casino_bank_accounts SET savings_locked_until = ? WHERE user_id = ?",
                 (locked_until.isoformat() if locked_until else None, user_id),
             )
+        auto_rebase_events = await maybe_apply_auto_economy_guard_with_db(
+            db,
+            user_id=user_id,
+            source=f"bank_deposit:{account_type}",
+        )
         await db.commit()
-        return True, "ok", wallet
+        return True, "ok", {"wallet_before": wallet, "auto_rebase_events": auto_rebase_events}
 
 
 async def withdraw_from_account(user_id, amount, account_type, now=None):

@@ -13,7 +13,7 @@ from app.db.repositories.casino_repo import (
     withdraw_from_account,
 )
 from app.features.casino import service as casino_service
-from app.features.economy.service import format_economy_notice
+from app.features.economy.service import format_economy_guard_notice, format_economy_notice
 
 
 BANK_IMAGE_URL = "https://i.postimg.cc/Xv1CSH62/image.png"
@@ -74,6 +74,9 @@ class TransactionModal(discord.ui.Modal):
                     )
                 return await interaction.response.send_message("🚫 存款失败，请稍后再试。", ephemeral=True)
             msg = f"✅ 已存入 **{amount}** 喵币到{'活期' if self.account_type == 'checking' else '定期'}账户。"
+            guard_notice = format_economy_guard_notice(payload.get("auto_rebase_events"))
+            if guard_notice:
+                msg = f"{msg}\n{guard_notice}"
         else:
             success, reason, payload = await withdraw_from_account(self.user_id, amount, self.account_type)
             if not success:

@@ -2,6 +2,8 @@ import time
 
 import aiosqlite
 
+from app.db.repositories.user_repo import _sync_citizen_level_with_db, apply_money_delta_with_db
+
 
 async def get_citizen(db_pool: aiosqlite.Connection, user_id: int):
     async with db_pool.execute("SELECT * FROM users WHERE user_id = ?", (user_id,)) as cursor:
@@ -25,7 +27,8 @@ async def create_citizen(
 
 
 async def update_money(db_pool: aiosqlite.Connection, user_id: int, amount: float):
-    await db_pool.execute("UPDATE users SET money = money + ? WHERE user_id = ?", (amount, user_id))
+    await apply_money_delta_with_db(db_pool, user_id, amount, economy_mode="gameplay")
+    await _sync_citizen_level_with_db(db_pool, user_id)
     await db_pool.commit()
 
 

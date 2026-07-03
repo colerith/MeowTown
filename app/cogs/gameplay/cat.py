@@ -616,10 +616,16 @@ class Cat(commands.Cog):
         )
 
         if latest_log is not None:
+            trigger_label = {
+                "manual": "手动执行",
+                "auto_personal": "个人熔断",
+                "auto_global": "全服熔断",
+            }.get(latest_log.get("trigger_kind"), latest_log.get("trigger_kind") or "未知")
             embed.add_field(
                 name="最近一次执行记录",
                 value=(
                     f"时间：`{latest_log['executed_at']}`\n"
+                    f"类型：**{trigger_label}**\n"
                     f"变更行数：**{latest_log['changed_rows']}**\n"
                     f"总量变化：**{format_economy_amount(latest_log['total_before'])}**"
                     f" → **{format_economy_amount(latest_log['total_after'])}**"

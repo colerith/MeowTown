@@ -5,6 +5,11 @@ import random
 ECONOMY_SOFT_CAP = 250_000
 ECONOMY_REBASE_STEP = 120_000
 ECONOMY_REBASE_MAX = 2_000_000
+ECONOMY_AUTO_USER_TRIGGER = 3_500_000
+ECONOMY_AUTO_GLOBAL_PEAK_TRIGGER = 8_000_000
+ECONOMY_AUTO_GLOBAL_TOTAL_TRIGGER = 120_000_000
+ECONOMY_AUTO_GLOBAL_OVER_CAP_TRIGGER = 12
+ECONOMY_AUTO_GLOBAL_COOLDOWN_SECONDS = 43_200
 ECONOMY_TAX_BRACKETS = (
     (50_000, 0.00),
     (200_000, 0.05),
@@ -111,16 +116,39 @@ def random_economy_flavor(summary):
 def format_economy_notice(summary):
     if not summary:
         return ""
+    guard_notice = format_economy_guard_notice(summary.get("auto_rebase_events"))
     if summary["raw_delta"] <= 0:
-        return "喵喵财政局已按新币制登记本次支出。"
+        base_notice = "喵喵财政局已按新币制登记本次支出。"
+        return f"{base_notice}\n{guard_notice}" if guard_notice else base_notice
     if summary["tax_amount"] <= 0:
-        return "本次收益已通过新币制审查，完整入账。"
-    return (
+        base_notice = "本次收益已通过新币制审查，完整入账。"
+        return f"{base_notice}\n{guard_notice}" if guard_notice else base_notice
+    base_notice = (
         f"原始收益 **{format_economy_amount(summary['raw_delta'])}**，"
         f"实收 **{format_economy_amount(summary['applied_delta'])}**，"
         f"本次综合税率 **{summary['effective_tax_rate'] * 100:.1f}%**。\n"
         f"{random_economy_flavor(summary)}"
     )
+    return f"{base_notice}\n{guard_notice}" if guard_notice else base_notice
+
+
+def format_economy_guard_notice(events):
+    if not events:
+        return ""
+
+    lines = []
+    for event in events:
+        if event.get("trigger_kind") == "auto_personal":
+            lines.append(
+                "🚨 财政喵发现你的钱包鼓得像气球，紧急启动个人资产熔断："
+                f" **{format_economy_amount(event['total_before'])}** → **{format_economy_amount(event['total_after'])}**。"
+            )
+        elif event.get("trigger_kind") == "auto_global":
+            lines.append(
+                "🌐 镇政厅拉响了全服通胀警报，自动缩表已完成："
+                f" **{format_economy_amount(event['total_before'])}** → **{format_economy_amount(event['total_after'])}**。"
+            )
+    return "\n".join(lines)
 
 
 def describe_revalue(before_value):
@@ -137,11 +165,17 @@ __all__ = [
     "ECONOMY_REBASE_MAX",
     "ECONOMY_REBASE_STEP",
     "ECONOMY_SOFT_CAP",
+    "ECONOMY_AUTO_GLOBAL_COOLDOWN_SECONDS",
+    "ECONOMY_AUTO_GLOBAL_OVER_CAP_TRIGGER",
+    "ECONOMY_AUTO_GLOBAL_PEAK_TRIGGER",
+    "ECONOMY_AUTO_GLOBAL_TOTAL_TRIGGER",
+    "ECONOMY_AUTO_USER_TRIGGER",
     "ECONOMY_TAX_BRACKETS",
     "build_economy_delta_summary",
     "calculate_progressive_gain",
     "describe_revalue",
     "format_economy_amount",
+    "format_economy_guard_notice",
     "format_economy_notice",
     "random_economy_flavor",
     "revalue_amount",

@@ -267,6 +267,9 @@ async def setup_db():
 				id INTEGER PRIMARY KEY AUTOINCREMENT,
 				executed_at TEXT NOT NULL,
 				operator_user_id INTEGER,
+				trigger_kind TEXT DEFAULT 'manual',
+				trigger_reason TEXT,
+				target_user_id INTEGER,
 				changed_rows INTEGER DEFAULT 0,
 				total_before INTEGER DEFAULT 0,
 				total_after INTEGER DEFAULT 0
@@ -395,6 +398,18 @@ async def setup_db():
 			pass
 		try:
 			await db.execute("ALTER TABLE casino_jail_records ADD COLUMN last_crime_date TEXT")
+		except Exception:
+			pass
+		try:
+			await db.execute("ALTER TABLE economy_rebase_logs ADD COLUMN trigger_kind TEXT DEFAULT 'manual'")
+		except Exception:
+			pass
+		try:
+			await db.execute("ALTER TABLE economy_rebase_logs ADD COLUMN trigger_reason TEXT")
+		except Exception:
+			pass
+		try:
+			await db.execute("ALTER TABLE economy_rebase_logs ADD COLUMN target_user_id INTEGER")
 		except Exception:
 			pass
 
