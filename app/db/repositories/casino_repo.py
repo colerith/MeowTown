@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 import aiosqlite
 
 from app.db.engine import DB_PATH
+from app.db.repositories.user_repo import apply_money_delta_with_db, clamp_money_value
 from app.features.casino.service import get_utc_now
 
 
@@ -177,7 +178,7 @@ async def withdraw_from_account(user_id, amount, account_type, now=None):
             if now < locked_until:
                 return False, "savings_locked", locked_until
 
-        await db.execute("UPDATE users SET money = money + ? WHERE user_id = ?", (amount, user_id))
+        await apply_money_delta_with_db(db, user_id, amount)
         await db.execute(
             f"UPDATE casino_bank_accounts SET {target_col} = {target_col} - ? WHERE user_id = ?",
             (amount, user_id),
@@ -319,7 +320,7 @@ async def apply_game_result(user_id, money_delta, win=False, loss=False):
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         await _ensure_casino_rows(db, user_id)
-        await db.execute("UPDATE users SET money = money + ? WHERE user_id = ?", (money_delta, user_id))
+        await apply_money_delta_with_db(db, user_id, money_delta)
         if win:
             await db.execute(
                 "UPDATE casino_game_stats SET wins = wins + 1 WHERE user_id = ?",
@@ -449,8 +450,8 @@ async def bribe_for_release(user_id, cost, today):
 async def transfer_money_between_users(from_user_id, to_user_id, amount):
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
-        await db.execute("UPDATE users SET money = money - ? WHERE user_id = ?", (amount, from_user_id))
-        await db.execute("UPDATE users SET money = money + ? WHERE user_id = ?", (amount, to_user_id))
+        await apply_money_delta_with_db(db, from_user_id, -amount)
+        await apply_money_delta_with_db(db, to_user_id, amount)
         await db.commit()
 
 
@@ -475,7 +476,7 @@ async def apply_bank_robbery_success(user_id, loot, today=None):
                 robberies_today = 0
                 robbery_successes_today = 0
                 guard_duels_today = 0
-        await db.execute("UPDATE users SET money = money + ? WHERE user_id = ?", (loot, user_id))
+        await apply_money_delta_with_db(db, user_id, loot)
         await db.execute(
             """
             UPDATE casino_crime_stats
@@ -673,10 +674,10 @@ async def update_gambling_profile(
             values.append(bet_mode)
         if custom_bet is not None:
             fields.append("custom_bet = ?")
-            values.append(custom_bet)
+            values.append(clamp_money_value(custom_bet))
         if last_bet is not None:
             fields.append("last_bet = ?")
-            values.append(last_bet)
+            values.append(clamp_money_value(last_bet))
         if random_min_percent is not None:
             fields.append("random_min_percent = ?")
             values.append(random_min_percent)

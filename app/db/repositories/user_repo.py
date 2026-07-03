@@ -8,6 +8,7 @@ from app.db.engine import DB_PATH
 LEVEL_SCORE_FACTOR = 120
 MAX_CITIZEN_LEVEL = 999
 MAX_LEVEL_SCORE = int((MAX_CITIZEN_LEVEL - 1) ** 2 * LEVEL_SCORE_FACTOR)
+SQLITE_INT64_MAX = 9223372036854775807
 
 
 def calculate_citizen_level(score):
@@ -50,6 +51,25 @@ def build_level_score_from_stats(stats):
     if not math.isfinite(score):
         return MAX_LEVEL_SCORE
     return max(0, min(MAX_LEVEL_SCORE, int(score)))
+
+
+def clamp_money_value(value):
+    numeric_value = float(value)
+    if not math.isfinite(numeric_value):
+        return SQLITE_INT64_MAX
+    return max(0, min(SQLITE_INT64_MAX, int(numeric_value)))
+
+
+async def apply_money_delta_with_db(db, user_id, amount):
+    cursor = await db.execute("SELECT money FROM users WHERE user_id = ?", (user_id,))
+    row = await cursor.fetchone()
+    if row is None:
+        return None
+
+    current_money = clamp_money_value(row[0] or 0)
+    new_money = clamp_money_value(current_money + int(amount))
+    await db.execute("UPDATE users SET money = ? WHERE user_id = ?", (new_money, user_id))
+    return new_money
 
 
 async def _fetch_profile_stats(db, user_id):
@@ -162,7 +182,7 @@ async def update_citizen_name(user_id, name):
 
 async def update_money(user_id, amount):
     async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("UPDATE users SET money = money + ? WHERE user_id = ?", (amount, user_id))
+        await apply_money_delta_with_db(db, user_id, amount)
         await _sync_citizen_level_with_db(db, user_id)
         await db.commit()
 
@@ -234,10 +254,13 @@ async def list_registered_user_ids():
 __all__ = [
     "MAX_CITIZEN_LEVEL",
     "LEVEL_SCORE_FACTOR",
+    "SQLITE_INT64_MAX",
+    "apply_money_delta_with_db",
     "build_level_score_from_stats",
     "calculate_citizen_level",
     "calculate_level_threshold",
     "calculate_next_level_threshold",
+    "clamp_money_value",
     "create_citizen",
     "equip_accessory",
     "get_citizen",
