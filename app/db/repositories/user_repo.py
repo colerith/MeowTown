@@ -7,6 +7,7 @@ from app.db.engine import DB_PATH
 
 LEVEL_SCORE_FACTOR = 120
 MAX_CITIZEN_LEVEL = 999
+MAX_LEVEL_SCORE = int((MAX_CITIZEN_LEVEL - 1) ** 2 * LEVEL_SCORE_FACTOR)
 
 
 def calculate_citizen_level(score):
@@ -46,7 +47,9 @@ def build_level_score_from_stats(stats):
         + stats["stock_share_count"] * 6
         - loan_amount * 0.5
     )
-    return max(0, int(score))
+    if not math.isfinite(score):
+        return MAX_LEVEL_SCORE
+    return max(0, min(MAX_LEVEL_SCORE, int(score)))
 
 
 async def _fetch_profile_stats(db, user_id):
