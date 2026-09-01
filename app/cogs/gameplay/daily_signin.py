@@ -316,26 +316,16 @@ class DailySignin(commands.Cog):
             if channel is None:
                 return
 
-            stock_cog = self.bot.get_cog("StockMarket")
-            if stock_cog is not None:
-                await stock_cog.ensure_news_panel_stack_bottom(channel=channel)
-
             panel_messages = await self.find_panel_messages(channel)
             newest_panel = panel_messages[0] if panel_messages else None
             latest_message = None
             async for message in channel.history(limit=1):
                 latest_message = message
 
-            stock_panel = None
-            if stock_cog is not None:
-                stock_panel = await stock_cog.find_stock_panel_messages(channel)
-                stock_panel = stock_panel[0] if stock_panel else None
-
             need_new_panel = (
                 newest_panel is None
                 or latest_message is None
                 or latest_message.id != newest_panel.id
-                or (stock_panel is not None and newest_panel.id < stock_panel.id)
             )
             new_panel_message = newest_panel
             if need_new_panel:

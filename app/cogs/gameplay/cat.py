@@ -9,6 +9,7 @@ from app.cogs.gameplay.casino.crime import open_crime_panel
 from app.cogs.gameplay.casino.gambling import open_gambling_panel
 from app.cogs.gameplay.stock_market import (
     CompensationConfigView,
+    STOCK_MARKET_CHANNEL_ID,
     create_stock_market_dashboard,
 )
 from app.cogs.gameplay.daily_signin import SIGNIN_CHANNEL_ID
@@ -800,7 +801,7 @@ class Cat(commands.Cog):
             return await ctx.followup.send("🚫 未找到目标频道，股市面板发送失败。", ephemeral=True)
 
         await ctx.followup.send(
-            f"✅ 已手动重发股市快讯面板到频道 **{SIGNIN_CHANNEL_ID}**。\n消息 ID: `{message.id}`",
+            f"✅ 已手动重发股市快讯面板到频道 **{STOCK_MARKET_CHANNEL_ID}**。\n消息 ID: `{message.id}`",
             ephemeral=True,
         )
 

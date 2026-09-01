@@ -571,15 +571,31 @@ class StockDashboardView(View):
         self.next_page_button.disabled = self.market_page >= page_count - 1
         self.page_indicator_button.label = f"{self.market_page + 1}/{page_count}"
 
+    async def show_market_page(self, interaction: discord.Interaction, target_page: int):
+        target_page = max(0, min(len(self.market_pages) - 1, target_page))
+        message_flags = getattr(getattr(interaction, "message", None), "flags", None)
+        if getattr(message_flags, "ephemeral", False):
+            self.market_page = target_page
+            self._sync_pagination_buttons()
+            return await interaction.response.edit_message(
+                embed=self.market_pages[self.market_page],
+                view=self,
+            )
+
+        private_view = StockDashboardView(self.market_pages)
+        private_view.market_page = target_page
+        private_view._sync_pagination_buttons()
+        await interaction.response.send_message(
+            embed=self.market_pages[target_page],
+            view=private_view,
+            ephemeral=True,
+        )
+
     async def previous_market_page(self, interaction: discord.Interaction):
-        self.market_page = max(0, self.market_page - 1)
-        self._sync_pagination_buttons()
-        await interaction.response.edit_message(embed=self.market_pages[self.market_page], view=self)
+        await self.show_market_page(interaction, self.market_page - 1)
 
     async def next_market_page(self, interaction: discord.Interaction):
-        self.market_page = min(len(self.market_pages) - 1, self.market_page + 1)
-        self._sync_pagination_buttons()
-        await interaction.response.edit_message(embed=self.market_pages[self.market_page], view=self)
+        await self.show_market_page(interaction, self.market_page + 1)
 
     @discord.ui.button(label="买入", style=discord.ButtonStyle.success, emoji="📈", row=0)
     async def buy_btn(self, button, interaction):
@@ -599,10 +615,9 @@ class StockDashboardView(View):
 
     @discord.ui.button(label="刷新", style=discord.ButtonStyle.secondary, emoji="🔄", row=0)
     async def refresh_btn(self, button, interaction):
-        await interaction.response.defer()
         pages = await render_market_embeds()
-        self.set_market_pages(pages)
-        await interaction.edit_original_response(embed=pages[0], view=self)
+        private_view = StockDashboardView(pages)
+        await interaction.response.send_message(embed=pages[0], view=private_view, ephemeral=True)
 
     @discord.ui.button(label="资产", style=discord.ButtonStyle.primary, emoji="💼", row=1)
     async def portfolio_btn(self, button, interaction):
@@ -640,7 +655,7 @@ class StockMarket(commands.Cog):
         self.bot = bot
         self.runtime_ready = False
         self.compensation_view = None
-        self.panel_lock = None
+        self.last_market_publish_slot = None
 
     def cog_unload(self):
         if self.market_update.is_running():
@@ -649,7 +664,6 @@ class StockMarket(commands.Cog):
     async def ensure_runtime_ready(self):
         if self.runtime_ready:
             return
-        self.panel_lock = self.panel_lock or asyncio.Lock()
         self.compensation_view = self.compensation_view or CompensationClaimView()
         self.bot.add_view(self.compensation_view)
         if not self.market_update.is_running():
@@ -675,18 +689,26 @@ class StockMarket(commands.Cog):
             return None
 
     async def publish_market_update(self):
+        current_slot = int(
+            datetime.datetime.now(datetime.timezone.utc).timestamp() // (20 * 60)
+        )
+        if self.last_market_publish_slot == current_slot:
+            return None
+        self.last_market_publish_slot = current_slot
+
         channel = None
         try:
             news_pages, now_str = await build_stock_news_embeds()
             channel = await self.get_market_channel()
             if not channel:
                 return
-            await channel.send(
+            sent_message = await channel.send(
                 embed=news_pages[0],
                 view=StockDashboardView(news_pages),
                 allowed_mentions=discord.AllowedMentions.none(),
             )
             print(f"[{now_str}] 股市新面板已发送")
+            return sent_message
         except Exception as exc:
             print(f"[StockMarket] market update failed: {exc}")
             if channel is not None:
@@ -695,7 +717,7 @@ class StockMarket(commands.Cog):
                     color=0x3498DB,
                 )
                 news_embed.description = "股市面板刷新时出现异常，请等待下一轮自动更新。"
-                await channel.send(embed=news_embed)
+                return await channel.send(embed=news_embed)
 
     @market_update.before_loop
     async def before_market_update(self):
@@ -703,11 +725,15 @@ class StockMarket(commands.Cog):
         db_ready_event = getattr(self.bot, "db_ready_event", None)
         if db_ready_event is not None:
             await db_ready_event.wait()
-        await asyncio.sleep(3)
         try:
             await self.initialize_stocks()
         except Exception:
             pass
+
+        interval_seconds = 20 * 60
+        now_timestamp = datetime.datetime.now(datetime.timezone.utc).timestamp()
+        wait_seconds = interval_seconds - (now_timestamp % interval_seconds)
+        await asyncio.sleep(wait_seconds)
 
     @commands.Cog.listener()
     async def on_ready(self):
@@ -717,28 +743,11 @@ class StockMarket(commands.Cog):
         await self.ensure_runtime_ready()
 
     async def ensure_news_panel_stack_bottom(self, channel=None, embed=None, pages=None):
-        """兼容旧调用名：只发送新面板，不再编辑或删除历史消息。"""
-        if self.panel_lock is None:
-            await self.ensure_runtime_ready()
-        async with self.panel_lock:
-            channel = await self.get_market_channel()
-            if channel is None:
-                return None
-
-            if pages is None:
-                if embed is not None:
-                    pages = [embed]
-                else:
-                    pages, _ = await build_stock_news_embeds()
-            return await channel.send(
-                embed=pages[0],
-                view=StockDashboardView(pages),
-                allowed_mentions=discord.AllowedMentions.none(),
-            )
+        """兼容旧调用名：统一走20分钟去重发布，不补发历史轮次。"""
+        return await self.publish_market_update()
 
     async def force_send_news_panel(self):
-        pages, _now_str = await build_stock_news_embeds()
-        return await self.ensure_news_panel_stack_bottom(pages=pages)
+        return await self.publish_market_update()
 
     async def backfill_registered_role(self, guild: discord.Guild, progress_callback=None):
         role = guild.get_role(REGISTERED_ROLE_ID)
