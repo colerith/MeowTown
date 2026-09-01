@@ -29,6 +29,7 @@ from app.db.repositories.economy_repo import (
     get_economy_snapshot,
     get_latest_economy_rebase_log,
 )
+from app.db.repositories.inventory_repo import add_item
 from app.features.casino import service as casino_service
 from app.features.economy.service import ECONOMY_SOFT_CAP, format_economy_amount
 from app.db.repositories.user_repo import create_citizen, get_citizen, get_citizen_profile_summary, update_citizen_look, update_money
@@ -37,6 +38,7 @@ from app.shared.data.cat_data import generate_cat_identity
 from app.shared.discord_roles import REGISTERED_ROLE_ID, grant_registered_role
 
 MAGIC_REROLL_COST = 2000
+RENAME_CARD_NAME = "改名卡"
 ADMIN_ONLY_PERMISSIONS = discord.Permissions(administrator=True)
 TOWN_GROUP = discord.SlashCommandGroup("喵喵小镇", "喵喵小镇市民系统")
 
@@ -174,11 +176,42 @@ class MagicHouseActionView(discord.ui.View):
         embed.add_field(name="新模样", value=f"**{new_pattern} {new_species}**", inline=True)
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
+    @discord.ui.button(label="购买改名卡", style=discord.ButtonStyle.success, emoji="💳")
+    async def buy_rename_card_btn(self, button, interaction):
+        if interaction.user.id != self.user_id:
+            return await interaction.response.send_message("这不是你的魔法订单哦！", ephemeral=True)
+
+        user = await get_citizen(self.user_id)
+        if not user:
+            return await interaction.response.send_message("你还没有身份！", ephemeral=True)
+
+        item = SHOP_ITEMS[RENAME_CARD_NAME]
+        if user[4] < item["price"]:
+            return await interaction.response.send_message(
+                f"🔮 巫师：你的钱不够！改名卡需要 **{item['price']}** 喵币。",
+                ephemeral=True,
+            )
+
+        await update_money(self.user_id, -item["price"])
+        await add_item(self.user_id, RENAME_CARD_NAME, 1)
+        await interaction.response.send_message(
+            f"✅ 购买成功！**{item['icon']} {RENAME_CARD_NAME}** 已放入背包，可前往背包使用。",
+            ephemeral=True,
+        )
+
 
 async def open_magic_house_panel(interaction: discord.Interaction, user_id: int):
     embed = discord.Embed(title="🔮 神秘魔法屋", color=0x8E44AD)
-    embed.description = "巫师可以帮你重塑品种和花色，但代价不低。"
-    embed.add_field(name="当前服务", value=f"洗点一次需 **{MAGIC_REROLL_COST}** 喵币。", inline=False)
+    rename_card = SHOP_ITEMS[RENAME_CARD_NAME]
+    embed.description = "巫师可以帮你重塑品种和花色，也出售能修改市民昵称的改名卡。"
+    embed.add_field(
+        name="当前服务",
+        value=(
+            f"🔮 洗点一次：**{MAGIC_REROLL_COST}** 喵币\n"
+            f"{rename_card['icon']} 改名卡：**{rename_card['price']}** 喵币"
+        ),
+        inline=False,
+    )
     embed.add_field(name="效果说明", value="会重新随机你的品种与花色，不影响资金、称号、股票和农场。", inline=False)
     await interaction.response.send_message(embed=embed, view=MagicHouseActionView(user_id), ephemeral=True)
 

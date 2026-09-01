@@ -149,6 +149,12 @@ def create_poker_deck():
     return [{"rank": rank, "suit": suit} for rank in ranks for suit in suits]
 
 
+def create_shuffled_poker_deck():
+    deck = create_poker_deck()
+    random.shuffle(deck)
+    return deck
+
+
 def calculate_blackjack_score(hand):
     score = 0
     aces = 0
@@ -221,8 +227,7 @@ def evaluate_seven_cards(seven_cards):
 
 
 def deal_texas_holdem_round():
-    deck = create_poker_deck()
-    random.shuffle(deck)
+    deck = create_shuffled_poker_deck()
     player_hand = [deck.pop(), deck.pop()]
     dealer_hand = [deck.pop(), deck.pop()]
     community_cards = [deck.pop() for _ in range(5)]
@@ -278,6 +283,7 @@ __all__ = [
     "is_sentence_active",
     "parse_positive_int",
     "create_poker_deck",
+    "create_shuffled_poker_deck",
     "deal_texas_holdem_round",
     "evaluate_seven_cards",
     "roulette_survival_multiplier",

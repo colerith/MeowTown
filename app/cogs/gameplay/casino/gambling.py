@@ -257,7 +257,7 @@ class BlackJackView(discord.ui.View):
         super().__init__(timeout=180)
         self.user_id = user_id
         self.bet = bet
-        self.deck = casino_service.create_poker_deck()
+        self.deck = casino_service.create_shuffled_poker_deck()
         self.player_hand = []
         self.dealer_hand = []
         self.is_over = False

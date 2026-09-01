@@ -155,6 +155,14 @@ class CasinoServiceTests(unittest.TestCase):
         self.assertEqual(casino_service.calculate_blackjack_score(hand), 21)
 
     @patch("app.features.casino.service.random.shuffle")
+    def test_create_shuffled_poker_deck_shuffles_complete_deck(self, mock_shuffle):
+        deck = casino_service.create_shuffled_poker_deck()
+
+        self.assertEqual(len(deck), 52)
+        self.assertEqual(len({(card["rank"], card["suit"]) for card in deck}), 52)
+        mock_shuffle.assert_called_once_with(deck)
+
+    @patch("app.features.casino.service.random.shuffle")
     def test_deal_texas_holdem_round_returns_complete_payload(self, _mock_shuffle):
         round_data = casino_service.deal_texas_holdem_round()
         self.assertEqual(len(round_data["player_hand"]), 2)
