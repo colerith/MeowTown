@@ -32,16 +32,13 @@ from app.features.stock_market.service import (
 )
 from app.shared.data.stock_data import STOCKS, calculate_next_price, generate_dynamic_news
 
-NEWS_CHANNEL_ID = 1443488941045977140
+COMPENSATION_CHANNEL_ID = 1443488941045977140
 STOCK_MARKET_CHANNEL_ID = 1404421101496434718
 REGISTERED_ROLE_ID = 1521848592476668005
 COMPENSATION_STOCK_OPTIONS = ("FISH", "CATN", "TOY", "BOX", "DOGE")
 COMPENSATION_SHARES_PER_STOCK = 100
 IMG_STOCK = "https://i.postimg.cc/gcSBzV0j/stock-market.png"
 STOCK_NEWS_TITLE = "📈 喵尔街快讯"
-STOCK_NEWS_PANEL_ID = "stock_news_panel_v1"
-STOCK_NEWS_PANEL_MARKER = "\u2063\u2063\u2064stock_news_panel_v1\u2064\u2063\u2063"
-STOCK_NEWS_PANEL_URL = f"https://meowtown.local/panel/{STOCK_NEWS_PANEL_ID}"
 STOCKS_PER_PAGE = 5
 
 
@@ -107,15 +104,6 @@ async def render_market_embed():
     return (await render_market_embeds())[0]
 
 
-def is_stock_news_message(message: discord.Message):
-    if message.author.bot is False or not message.embeds:
-        return False
-    embed = message.embeds[0]
-    return (embed.title or "").startswith(STOCK_NEWS_TITLE) and (
-        message.content == STOCK_NEWS_PANEL_MARKER
-        or (embed.url or "") == STOCK_NEWS_PANEL_URL
-    )
-
 
 async def build_stock_news_embeds():
     quote_rows = []
@@ -150,7 +138,6 @@ async def build_stock_news_embeds():
     for page_index in range(page_count):
         news_embed = discord.Embed(
             title=f"{STOCK_NEWS_TITLE} · {page_index + 1}/{page_count}",
-            url=STOCK_NEWS_PANEL_URL,
             color=0x3498DB,
         )
         start = page_index * STOCKS_PER_PAGE
@@ -387,7 +374,7 @@ class CompensationConfigView(View):
 
     @discord.ui.button(label="发布到频道", style=discord.ButtonStyle.success, emoji="✅", row=1)
     async def publish_btn(self, button, interaction):
-        channel = interaction.client.get_channel(NEWS_CHANNEL_ID)
+        channel = interaction.client.get_channel(COMPENSATION_CHANNEL_ID)
         if not channel:
             return await interaction.response.send_message("🚫 未找到目标频道，无法发布补偿公告。", ephemeral=True)
 
@@ -695,7 +682,6 @@ class StockMarket(commands.Cog):
             if not channel:
                 return
             await channel.send(
-                content=STOCK_NEWS_PANEL_MARKER,
                 embed=news_pages[0],
                 view=StockDashboardView(news_pages),
                 allowed_mentions=discord.AllowedMentions.none(),
@@ -735,7 +721,7 @@ class StockMarket(commands.Cog):
         if self.panel_lock is None:
             await self.ensure_runtime_ready()
         async with self.panel_lock:
-            channel = channel or await self.get_market_channel()
+            channel = await self.get_market_channel()
             if channel is None:
                 return None
 
@@ -745,7 +731,6 @@ class StockMarket(commands.Cog):
                 else:
                     pages, _ = await build_stock_news_embeds()
             return await channel.send(
-                content=STOCK_NEWS_PANEL_MARKER,
                 embed=pages[0],
                 view=StockDashboardView(pages),
                 allowed_mentions=discord.AllowedMentions.none(),
