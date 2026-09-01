@@ -33,6 +33,7 @@ from app.features.stock_market.service import (
 from app.shared.data.stock_data import STOCKS, calculate_next_price, generate_dynamic_news
 
 NEWS_CHANNEL_ID = 1443488941045977140
+STOCK_MARKET_CHANNEL_ID = 1404421101496434718
 REGISTERED_ROLE_ID = 1521848592476668005
 COMPENSATION_STOCK_OPTIONS = ("FISH", "CATN", "TOY", "BOX", "DOGE")
 COMPENSATION_SHARES_PER_STOCK = 100
@@ -41,22 +42,19 @@ STOCK_NEWS_TITLE = "📈 喵尔街快讯"
 STOCK_NEWS_PANEL_ID = "stock_news_panel_v1"
 STOCK_NEWS_PANEL_MARKER = "\u2063\u2063\u2064stock_news_panel_v1\u2064\u2063\u2063"
 STOCK_NEWS_PANEL_URL = f"https://meowtown.local/panel/{STOCK_NEWS_PANEL_ID}"
+STOCKS_PER_PAGE = 5
 
 
 def get_guide_embed():
     embed = discord.Embed(title="📈 喵尔街风云 · 投资指南", color=0xFFD700)
     embed.description = "欢迎来到喵喵小镇的金融中心！在这里，你可以一夜暴富，也可能天台排队。"
-    embed.add_field(
-        name="🏢 上市公司简介",
-        value=(
-            "🐟 **咸鱼海运 (FISH)**: 价格亲民，波动小，避风港。\n"
-            "📦 **纸箱地产 (BOX)**: 稳健增长，受天气影响。\n"
-            "🎣 **逗猫棒重工 (TOY)**: 周期性波动，受消费新闻影响。\n"
-            "🌿 **猫薄荷生物 (CATN)**: **高风险高回报**！研发成功暴涨。\n"
-            "🐕 **柴犬币 (DOGE)**: **极度危险**！可能翻倍也可能归零。"
-        ),
-        inline=False,
-    )
+    stock_lines = [
+        f"{data['icon']} **{data['name']} ({stock_id})**｜基准 {data['base_price']}｜波动 {data['volatility']:.0%}"
+        for stock_id, data in STOCKS.items()
+    ]
+    midpoint = (len(stock_lines) + 1) // 2
+    embed.add_field(name="🏢 上市公司（1/2）", value="\n".join(stock_lines[:midpoint]), inline=False)
+    embed.add_field(name="🏢 上市公司（2/2）", value="\n".join(stock_lines[midpoint:]), inline=False)
     embed.add_field(
         name="🎮 核心玩法",
         value=(
@@ -78,40 +76,49 @@ def get_guide_embed():
     return embed
 
 
-async def render_market_embed():
-    embed = discord.Embed(title="📊 喵尔街实时行情", color=0x1ABC9C)
-    embed.set_image(url=IMG_STOCK)
-
+async def render_market_embeds():
     rows = await list_market_stocks()
     if not rows:
+        embed = discord.Embed(title="📊 喵尔街实时行情", color=0x1ABC9C)
+        embed.set_image(url=IMG_STOCK)
         embed.description = "市场尚未开盘..."
-        return embed
+        return [embed]
 
-    for stock_id, price, change in rows:
-        data = STOCKS.get(stock_id, {"icon": "❓", "name": "未知"})
-        trend, pct = format_market_trend(price, change)
-        embed.add_field(
-            name=f"{data['icon']} {data['name']} ({stock_id})",
-            value=f"Price: **{price:.2f}**\nTrend: {trend} ({pct:+.1f}%)",
-            inline=True,
-        )
+    pages = []
+    page_count = (len(rows) + STOCKS_PER_PAGE - 1) // STOCKS_PER_PAGE
+    for page_index in range(page_count):
+        embed = discord.Embed(title=f"📊 喵尔街实时行情 · {page_index + 1}/{page_count}", color=0x1ABC9C)
+        embed.set_image(url=IMG_STOCK)
+        start = page_index * STOCKS_PER_PAGE
+        for stock_id, price, change in rows[start:start + STOCKS_PER_PAGE]:
+            data = STOCKS.get(stock_id, {"icon": "❓", "name": "未知"})
+            trend, pct = format_market_trend(price, change)
+            embed.add_field(
+                name=f"{data['icon']} {data['name']} ({stock_id})",
+                value=f"Price: **{price:.2f}**\nTrend: {trend} ({pct:+.1f}%)",
+                inline=True,
+            )
+        embed.set_footer(text=f"第 {page_index + 1}/{page_count} 页 | 数据每20分钟刷新一次 | 投资有风险")
+        pages.append(embed)
+    return pages
 
-    embed.set_footer(text="数据每20分钟刷新一次 | 投资有风险，入市需谨慎")
-    return embed
+
+async def render_market_embed():
+    return (await render_market_embeds())[0]
 
 
 def is_stock_news_message(message: discord.Message):
     if message.author.bot is False or not message.embeds:
         return False
     embed = message.embeds[0]
-    return embed.title == STOCK_NEWS_TITLE and (
+    return (embed.title or "").startswith(STOCK_NEWS_TITLE) and (
         message.content == STOCK_NEWS_PANEL_MARKER
         or (embed.url or "") == STOCK_NEWS_PANEL_URL
     )
 
 
-async def build_stock_news_embed():
-    news_embed = discord.Embed(title=STOCK_NEWS_TITLE, url=STOCK_NEWS_PANEL_URL, color=0x3498DB)
+async def build_stock_news_embeds():
+    quote_rows = []
     for stock_id, data in STOCKS.items():
         current_price = await get_stock_price(stock_id) or data["base_price"]
         news, score = generate_dynamic_news(stock_id, current_price=current_price)
@@ -126,15 +133,41 @@ async def build_stock_news_embed():
         else:
             icon = "⏺️"
 
-        news_embed.add_field(
-            name=f"{data['icon']} {data['name']}",
-            value=f"**{new_price:.2f}** {icon} ({change_pct:+.2f}%)\n> {news}",
-            inline=False,
+        quote_rows.append(
+            {
+                "stock_id": stock_id,
+                "data": data,
+                "new_price": new_price,
+                "icon": icon,
+                "change_pct": change_pct,
+                "news": news,
+            }
         )
 
     now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    news_embed.set_footer(text=f"最后刷新: {now_str} | 20分钟更新一次")
-    return news_embed, now_str
+    pages = []
+    page_count = (len(quote_rows) + STOCKS_PER_PAGE - 1) // STOCKS_PER_PAGE
+    for page_index in range(page_count):
+        news_embed = discord.Embed(
+            title=f"{STOCK_NEWS_TITLE} · {page_index + 1}/{page_count}",
+            url=STOCK_NEWS_PANEL_URL,
+            color=0x3498DB,
+        )
+        start = page_index * STOCKS_PER_PAGE
+        for row in quote_rows[start:start + STOCKS_PER_PAGE]:
+            news_embed.add_field(
+                name=f"{row['data']['icon']} {row['data']['name']} ({row['stock_id']})",
+                value=f"**{row['new_price']:.2f}** {row['icon']} ({row['change_pct']:+.2f}%)\n> {row['news']}",
+                inline=False,
+            )
+        news_embed.set_footer(text=f"第 {page_index + 1}/{page_count} 页 | 最后刷新: {now_str} | 20分钟更新一次")
+        pages.append(news_embed)
+    return pages, now_str
+
+
+async def build_stock_news_embed():
+    pages, now_str = await build_stock_news_embeds()
+    return pages[0], now_str
 
 
 @dataclass
@@ -374,7 +407,8 @@ class CompensationConfigView(View):
 
 
 async def create_stock_market_dashboard():
-    return await render_market_embed(), StockDashboardView()
+    pages = await render_market_embeds()
+    return pages[0], StockDashboardView(pages)
 
 
 async def open_compensation_config_panel(interaction: discord.Interaction):
@@ -490,8 +524,75 @@ class LoanModal(Modal):
 
 
 class StockDashboardView(View):
-    def __init__(self):
+    def __init__(self, market_pages=None):
         super().__init__(timeout=None)
+        self.market_pages = list(market_pages or [])
+        self.market_page = 0
+        self.previous_page_button = None
+        self.page_indicator_button = None
+        self.next_page_button = None
+        self._sync_pagination_buttons()
+
+    def set_market_pages(self, market_pages):
+        self.market_pages = list(market_pages or [])
+        self.market_page = 0
+        self._sync_pagination_buttons()
+
+    def _sync_pagination_buttons(self):
+        if len(self.market_pages) <= 1:
+            for page_button in (
+                self.previous_page_button,
+                self.page_indicator_button,
+                self.next_page_button,
+            ):
+                if page_button is not None and page_button in self.children:
+                    self.remove_item(page_button)
+            return
+
+        if self.previous_page_button is None:
+            self.previous_page_button = Button(
+                label="上一页",
+                style=discord.ButtonStyle.secondary,
+                emoji="⬅️",
+                row=2,
+            )
+            self.page_indicator_button = Button(
+                label="1/1",
+                style=discord.ButtonStyle.secondary,
+                row=2,
+                disabled=True,
+            )
+            self.next_page_button = Button(
+                label="下一页",
+                style=discord.ButtonStyle.secondary,
+                emoji="➡️",
+                row=2,
+            )
+            self.previous_page_button.callback = self.previous_market_page
+            self.next_page_button.callback = self.next_market_page
+
+        for page_button in (
+            self.previous_page_button,
+            self.page_indicator_button,
+            self.next_page_button,
+        ):
+            if page_button not in self.children:
+                self.add_item(page_button)
+
+        page_count = len(self.market_pages)
+        self.previous_page_button.disabled = self.market_page == 0
+        self.next_page_button.disabled = self.market_page >= page_count - 1
+        self.page_indicator_button.label = f"{self.market_page + 1}/{page_count}"
+
+    async def previous_market_page(self, interaction: discord.Interaction):
+        self.market_page = max(0, self.market_page - 1)
+        self._sync_pagination_buttons()
+        await interaction.response.edit_message(embed=self.market_pages[self.market_page], view=self)
+
+    async def next_market_page(self, interaction: discord.Interaction):
+        self.market_page = min(len(self.market_pages) - 1, self.market_page + 1)
+        self._sync_pagination_buttons()
+        await interaction.response.edit_message(embed=self.market_pages[self.market_page], view=self)
 
     @discord.ui.button(label="买入", style=discord.ButtonStyle.success, emoji="📈", row=0)
     async def buy_btn(self, button, interaction):
@@ -512,8 +613,9 @@ class StockDashboardView(View):
     @discord.ui.button(label="刷新", style=discord.ButtonStyle.secondary, emoji="🔄", row=0)
     async def refresh_btn(self, button, interaction):
         await interaction.response.defer()
-        embed = await render_market_embed()
-        await interaction.edit_original_response(embed=embed, view=self)
+        pages = await render_market_embeds()
+        self.set_market_pages(pages)
+        await interaction.edit_original_response(embed=pages[0], view=self)
 
     @discord.ui.button(label="资产", style=discord.ButtonStyle.primary, emoji="💼", row=1)
     async def portfolio_btn(self, button, interaction):
@@ -576,15 +678,29 @@ class StockMarket(commands.Cog):
     async def market_update(self):
         await self.publish_market_update()
 
+    async def get_market_channel(self):
+        channel = self.bot.get_channel(STOCK_MARKET_CHANNEL_ID)
+        if channel is not None:
+            return channel
+        try:
+            return await self.bot.fetch_channel(STOCK_MARKET_CHANNEL_ID)
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+            return None
+
     async def publish_market_update(self):
         channel = None
         try:
-            news_embed, now_str = await build_stock_news_embed()
-            channel = self.bot.get_channel(NEWS_CHANNEL_ID)
+            news_pages, now_str = await build_stock_news_embeds()
+            channel = await self.get_market_channel()
             if not channel:
                 return
-            await self.ensure_news_panel_stack_bottom(channel=channel, embed=news_embed)
-            print(f"[{now_str}] 股市新闻已更新")
+            await channel.send(
+                content=STOCK_NEWS_PANEL_MARKER,
+                embed=news_pages[0],
+                view=StockDashboardView(news_pages),
+                allowed_mentions=discord.AllowedMentions.none(),
+            )
+            print(f"[{now_str}] 股市新面板已发送")
         except Exception as exc:
             print(f"[StockMarket] market update failed: {exc}")
             if channel is not None:
@@ -593,7 +709,7 @@ class StockMarket(commands.Cog):
                     color=0x3498DB,
                 )
                 news_embed.description = "股市面板刷新时出现异常，请等待下一轮自动更新。"
-                await self.ensure_news_panel_stack_bottom(channel=channel, embed=news_embed)
+                await channel.send(embed=news_embed)
 
     @market_update.before_loop
     async def before_market_update(self):
@@ -614,88 +730,30 @@ class StockMarket(commands.Cog):
             await db_ready_event.wait()
         await self.ensure_runtime_ready()
 
-    async def find_stock_panel_messages(self, channel):
-        panel_messages = []
-        async for message in channel.history(limit=100):
-            if is_stock_news_message(message):
-                panel_messages.append(message)
-        return panel_messages
-
-    async def ensure_news_panel_stack_bottom(self, channel=None, embed=None):
+    async def ensure_news_panel_stack_bottom(self, channel=None, embed=None, pages=None):
+        """兼容旧调用名：只发送新面板，不再编辑或删除历史消息。"""
         if self.panel_lock is None:
             await self.ensure_runtime_ready()
         async with self.panel_lock:
-            channel = channel or self.bot.get_channel(NEWS_CHANNEL_ID)
-            if channel is None:
-                return
-
-            panel_messages = await self.find_stock_panel_messages(channel)
-            newest_panel = panel_messages[0] if panel_messages else None
-
-            signin_cog = self.bot.get_cog("DailySignin")
-            signin_panel = None
-            if signin_cog is not None:
-                signin_panel = await signin_cog.get_latest_panel_message(channel)
-
-            should_update_existing = embed is not None
-            if embed is None:
-                if newest_panel is not None and newest_panel.embeds:
-                    embed = newest_panel.embeds[0]
-                else:
-                    embed, _ = await build_stock_news_embed()
-
-            if newest_panel is not None and should_update_existing:
-                try:
-                    await newest_panel.edit(content=None, embed=embed)
-                except discord.NotFound:
-                    newest_panel = None
-
-            ordered_panel = newest_panel
-            should_recreate = (
-                ordered_panel is None
-                or signin_panel is None
-                or ordered_panel.id > signin_panel.id
-            )
-
-            if should_recreate:
-                ordered_panel = await channel.send(embed=embed)
-
-            for message in panel_messages:
-                if ordered_panel is not None and message.id != ordered_panel.id:
-                    try:
-                        await message.delete()
-                    except Exception:
-                        pass
-
-            return ordered_panel
-
-    async def force_send_news_panel(self):
-        if self.panel_lock is None:
-            await self.ensure_runtime_ready()
-        async with self.panel_lock:
-            channel = self.bot.get_channel(NEWS_CHANNEL_ID)
+            channel = channel or await self.get_market_channel()
             if channel is None:
                 return None
 
-            embed, _now_str = await build_stock_news_embed()
-            panel_messages = await self.find_stock_panel_messages(channel)
-            ordered_panel = await channel.send(embed=embed)
+            if pages is None:
+                if embed is not None:
+                    pages = [embed]
+                else:
+                    pages, _ = await build_stock_news_embeds()
+            return await channel.send(
+                content=STOCK_NEWS_PANEL_MARKER,
+                embed=pages[0],
+                view=StockDashboardView(pages),
+                allowed_mentions=discord.AllowedMentions.none(),
+            )
 
-            for message in panel_messages:
-                try:
-                    await message.delete()
-                except Exception:
-                    pass
-
-            return ordered_panel
-
-    @commands.Cog.listener()
-    async def on_message(self, message):
-        if message.author.bot:
-            return
-        if message.channel.id != NEWS_CHANNEL_ID:
-            return
-        await self.ensure_news_panel_stack_bottom(channel=message.channel)
+    async def force_send_news_panel(self):
+        pages, _now_str = await build_stock_news_embeds()
+        return await self.ensure_news_panel_stack_bottom(pages=pages)
 
     async def backfill_registered_role(self, guild: discord.Guild, progress_callback=None):
         role = guild.get_role(REGISTERED_ROLE_ID)

@@ -63,6 +63,19 @@ class MonopolyServiceTests(unittest.TestCase):
 
 
 class StockMarketServiceTests(unittest.TestCase):
+    def test_stock_catalog_contains_20_complete_unique_stocks(self):
+        self.assertEqual(len(stock_data.STOCKS), 20)
+        self.assertEqual(len({item["name"] for item in stock_data.STOCKS.values()}), 20)
+        for stock_id, item in stock_data.STOCKS.items():
+            self.assertLess(item["min_price"], item["base_price"], stock_id)
+            self.assertLess(item["base_price"], item["max_price"], stock_id)
+
+    def test_every_stock_can_generate_dynamic_news(self):
+        for stock_id, item in stock_data.STOCKS.items():
+            news, score = stock_data.generate_dynamic_news(stock_id, current_price=item["base_price"])
+            self.assertTrue(news, stock_id)
+            self.assertIsInstance(score, int)
+
     def test_parse_positive_int_and_amount(self):
         self.assertEqual(stock_service.parse_positive_int("12"), 12)
         self.assertEqual(stock_service.parse_positive_amount("12.345"), 12.35)

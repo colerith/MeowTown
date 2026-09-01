@@ -7,7 +7,22 @@ STOCKS = {
     "CATN": {"name": "猫薄荷生物", "icon": "🌿", "base_price": 200, "volatility": 0.40, "min_price": 40, "max_price": 1200},
     "TOY": {"name": "逗猫棒重工", "icon": "🎣", "base_price": 120, "volatility": 0.25, "min_price": 24, "max_price": 720},
     "BOX": {"name": "纸箱地产", "icon": "📦", "base_price": 80, "volatility": 0.10, "min_price": 20, "max_price": 400},
-    "DOGE": {"name": "柴犬币", "icon": "🐕", "base_price": 10, "volatility": 0.90, "min_price": 0.5, "max_price": 500}
+    "DOGE": {"name": "柴犬币", "icon": "🐕", "base_price": 10, "volatility": 0.90, "min_price": 0.5, "max_price": 500},
+    "BANK": {"name": "喵爪银行", "icon": "🏦", "base_price": 160, "volatility": 0.12, "min_price": 40, "max_price": 800},
+    "TECH": {"name": "量子猫科技", "icon": "💻", "base_price": 260, "volatility": 0.32, "min_price": 52, "max_price": 1560},
+    "FOOD": {"name": "皇家罐头", "icon": "🥫", "base_price": 95, "volatility": 0.16, "min_price": 19, "max_price": 570},
+    "MEDI": {"name": "白爪医疗", "icon": "🏥", "base_price": 180, "volatility": 0.18, "min_price": 36, "max_price": 1080},
+    "ENER": {"name": "彩虹能源", "icon": "⚡", "base_price": 220, "volatility": 0.28, "min_price": 44, "max_price": 1320},
+    "MOON": {"name": "月球矿业", "icon": "🌕", "base_price": 320, "volatility": 0.36, "min_price": 64, "max_price": 1920},
+    "CLOUD": {"name": "云端数据", "icon": "☁️", "base_price": 210, "volatility": 0.24, "min_price": 42, "max_price": 1260},
+    "ROBO": {"name": "机械猫智能", "icon": "🤖", "base_price": 280, "volatility": 0.34, "min_price": 56, "max_price": 1680},
+    "CAFE": {"name": "呼噜咖啡", "icon": "☕", "base_price": 70, "volatility": 0.14, "min_price": 14, "max_price": 420},
+    "FARM": {"name": "丰收农业", "icon": "🌾", "base_price": 85, "volatility": 0.17, "min_price": 17, "max_price": 510},
+    "GAME": {"name": "毛球游戏", "icon": "🎮", "base_price": 145, "volatility": 0.30, "min_price": 29, "max_price": 870},
+    "AIR": {"name": "喵翼航空", "icon": "✈️", "base_price": 190, "volatility": 0.22, "min_price": 38, "max_price": 1140},
+    "GOLD": {"name": "金铃珠宝", "icon": "💎", "base_price": 350, "volatility": 0.11, "min_price": 87.5, "max_price": 1400},
+    "HOME": {"name": "暖窝家居", "icon": "🛋️", "base_price": 105, "volatility": 0.13, "min_price": 21, "max_price": 525},
+    "MAGI": {"name": "魔法药剂", "icon": "🧪", "base_price": 240, "volatility": 0.38, "min_price": 48, "max_price": 1440},
 }
 
 # --- 新闻组合部件 ---
@@ -157,6 +172,18 @@ NEWS_PARTS = {
     }
 }
 
+GENERIC_STOCK_EVENTS = [
+    {"text": "公布的季度业绩大幅超出市场预期", "score": 3},
+    {"text": "拿下了小镇基础设施建设的大额订单", "score": 2},
+    {"text": "推出的新产品获得市民一致好评", "score": 2},
+    {"text": "与喵喵议会签署了长期合作协议", "score": 1},
+    {"text": "被曝核心产品存在严重质量问题", "score": -3},
+    {"text": "因成本飙升下调了全年盈利预期", "score": -2},
+    {"text": "遭遇主要供应商突然停止供货", "score": -2},
+    {"text": "的管理层内讧消息引发市场担忧", "score": -1},
+]
+
+
 def calculate_next_price(stock_id, current_price, news_score):
     """
     根据当前价格、基础价格和新闻分数，计算下一个价格。
@@ -233,7 +260,7 @@ def generate_dynamic_news(stock_id, current_price=None):
         # 特定事件
         # 简单处理：如果随机数 < positive_prob，尝试找分数为正的事件，否则找负的
         # 为了代码简单，这里先随机取，如果不符合倾向再重试一次
-        candidates = NEWS_PARTS["event"][stock_id]
+        candidates = NEWS_PARTS["event"].get(stock_id, GENERIC_STOCK_EVENTS)
         chosen_event = random.choice(candidates)
         
         # 简单的重试机制以符合概率倾向
