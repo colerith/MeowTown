@@ -28,7 +28,7 @@ from app.db.repositories.monopoly_repo import (
     reclaim_expired_properties,
     release_from_jail,
     send_player_to_jail,
-    upgrade_property,
+    upgrade_property_to_level,
 )
 from app.db.repositories.user_repo import get_citizen, get_user_money, update_money
 from app.features.economy.service import format_economy_notice
@@ -106,31 +106,143 @@ async def render_game_embed(user_id, user_name, avatar_url, log_text=""):
     return embed, player
 
 # --- UI 组件：升级地产 ---
+MAX_PROPERTY_LEVEL = 5
+PROPERTY_PAGE_SIZE = 25
+
+
+class UpgradeTargetModal(discord.ui.Modal):
+    def __init__(self, user_id, map_id, current_level, property_name):
+        super().__init__(title=f"升级 {property_name}")
+        self.user_id = user_id
+        self.map_id = map_id
+        self.current_level = current_level
+        self.property_name = property_name
+        self.add_item(
+            discord.ui.InputText(
+                label=f"目标等级（{current_level + 1}-{MAX_PROPERTY_LEVEL}）",
+                value=str(MAX_PROPERTY_LEVEL),
+                placeholder="输入要直接升到的等级",
+                required=True,
+                max_length=1,
+            )
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        try:
+            target_level = int(self.children[0].value)
+        except (TypeError, ValueError):
+            return await interaction.response.send_message("🚫 目标等级必须是整数。", ephemeral=True)
+
+        if not self.current_level < target_level <= MAX_PROPERTY_LEVEL:
+            return await interaction.response.send_message(
+                f"🚫 请输入 **{self.current_level + 1}-{MAX_PROPERTY_LEVEL}** 之间的目标等级。",
+                ephemeral=True,
+            )
+
+        success, reason, payload = await upgrade_property_to_level(
+            self.user_id,
+            self.map_id,
+            target_level,
+            MAX_PROPERTY_LEVEL,
+        )
+        if not success:
+            if reason == "insufficient":
+                return await interaction.response.send_message(
+                    f"🚫 资金不足！升到 Lv.{target_level} 共需 **{payload:.2f}** 喵币。",
+                    ephemeral=True,
+                )
+            if reason == "invalid_target":
+                return await interaction.response.send_message(
+                    f"🚫 地产等级已经变化，请重新打开资产面板。当前为 Lv.{payload}。",
+                    ephemeral=True,
+                )
+            return await interaction.response.send_message("🚫 地产不存在或已经不属于你。", ephemeral=True)
+
+        tile = get_map_tile(self.map_id)
+        new_rent = calculate_property_rent(tile, payload["new_level"], None)
+        await interaction.response.send_message(
+            f"✅ **批量升级成功！**\n"
+            f"**{self.property_name}** 从 Lv.{payload['old_level']} 升至 **Lv.{payload['new_level']}**，"
+            f"一次完成 {payload['levels_upgraded']} 级升级。\n"
+            f"花费：**{payload['total_cost']:.2f}** 喵币｜新租金：**{new_rent:.2f}**",
+            ephemeral=True,
+        )
+
+
 class UpgradeSelect(Select):
-    def __init__(self, properties):
+    def __init__(self, user_id, properties):
+        self.user_id = user_id
+        self.property_lookup = {map_id: (level, name) for map_id, level, name, _price in properties}
         options = []
         for map_id, level, name, price in properties:
-            upgrade_cost = calculate_upgrade_cost(price)
+            max_upgrade_cost = calculate_upgrade_cost(price) * (MAX_PROPERTY_LEVEL - level)
             rent = calculate_property_rent(get_map_tile(map_id), level, None)
             options.append(discord.SelectOption(
                 label=f"{name} (Lv.{level})",
-                description=f"升级: {upgrade_cost:.2f}币 | 当前租金: {rent:.2f}",
-                value=f"{map_id}_{upgrade_cost}",
+                description=f"升满共需: {max_upgrade_cost:.2f}币 | 当前租金: {rent:.2f}",
+                value=str(map_id),
                 emoji="🏗️"
             ))
         super().__init__(placeholder="选择要升级的地产...", min_values=1, max_values=1, options=options)
 
     async def callback(self, interaction: discord.Interaction):
-        data_str = self.values[0].split("_")
-        map_id = int(data_str[0])
-        cost = float(data_str[1])
+        if interaction.user.id != self.user_id:
+            return await interaction.response.send_message("这不是你的地产升级面板。", ephemeral=True)
 
-        success, _ = await upgrade_property(interaction.user.id, map_id, cost)
-        if not success:
-            return await interaction.response.send_message(f"🚫 资金不足！需要 {cost:.2f}", ephemeral=True)
-        
-        tile = get_map_tile(map_id)
-        await interaction.response.send_message(f"✅ **升级成功！**\n**{tile['name']}** 变得更加豪华了，租金大幅提升！", ephemeral=True)
+        map_id = int(self.values[0])
+        current_level, property_name = self.property_lookup[map_id]
+        await interaction.response.send_modal(
+            UpgradeTargetModal(self.user_id, map_id, current_level, property_name)
+        )
+
+
+class PropertyUpgradeView(View):
+    def __init__(self, user_id, properties, page=0):
+        super().__init__(timeout=180)
+        self.user_id = user_id
+        self.properties = properties
+        self.page_count = max(1, (len(properties) + PROPERTY_PAGE_SIZE - 1) // PROPERTY_PAGE_SIZE)
+        self.page = max(0, min(page, self.page_count - 1))
+
+        start = self.page * PROPERTY_PAGE_SIZE
+        page_properties = properties[start:start + PROPERTY_PAGE_SIZE]
+        self.add_item(UpgradeSelect(user_id, page_properties))
+
+        previous_button = Button(
+            label="上一页",
+            style=discord.ButtonStyle.secondary,
+            emoji="⬅️",
+            row=1,
+            disabled=self.page == 0,
+        )
+        next_button = Button(
+            label="下一页",
+            style=discord.ButtonStyle.secondary,
+            emoji="➡️",
+            row=1,
+            disabled=self.page >= self.page_count - 1,
+        )
+        previous_button.callback = self.previous_page
+        next_button.callback = self.next_page
+        self.add_item(previous_button)
+        self.add_item(next_button)
+
+    def content(self):
+        return f"🏗️ 请选择要升级的地产（第 {self.page + 1}/{self.page_count} 页）："
+
+    async def interaction_check(self, interaction: discord.Interaction):
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("这不是你的地产升级面板。", ephemeral=True)
+            return False
+        return True
+
+    async def previous_page(self, interaction: discord.Interaction):
+        view = PropertyUpgradeView(self.user_id, self.properties, self.page - 1)
+        await interaction.response.edit_message(content=view.content(), view=view)
+
+    async def next_page(self, interaction: discord.Interaction):
+        view = PropertyUpgradeView(self.user_id, self.properties, self.page + 1)
+        await interaction.response.edit_message(content=view.content(), view=view)
 
 # --- UI 组件：道具使用 ---
 class ItemSelect(Select):
@@ -384,9 +496,8 @@ class MonopolyDashboardView(View):
         if not props_data:
             return await interaction.response.send_message("🚫 所有房产均已升至最高级！", ephemeral=True)
 
-        view = View()
-        view.add_item(UpgradeSelect(props_data[:25])) 
-        await interaction.response.send_message("🏗️ 请选择要升级的地产：", view=view, ephemeral=True)
+        view = PropertyUpgradeView(self.user_id, props_data)
+        await interaction.response.send_message(view.content(), view=view, ephemeral=True)
 
     @discord.ui.button(label="维护", style=discord.ButtonStyle.success, emoji="🛠️", row=1)
     async def maintain_btn(self, button, interaction):

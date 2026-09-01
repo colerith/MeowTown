@@ -104,6 +104,54 @@ async def upgrade_property(user_id, map_id, cost):
         return True, money
 
 
+async def upgrade_property_to_level(user_id, map_id, target_level, max_level=5):
+    """在一个事务中把地产直接升级到目标等级。"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("BEGIN IMMEDIATE")
+        cursor = await db.execute(
+            "SELECT owner_id, level, purchase_price FROM monopoly_properties WHERE map_id = ?",
+            (map_id,),
+        )
+        property_row = await cursor.fetchone()
+        if not property_row:
+            await db.rollback()
+            return False, "not_found", None
+
+        owner_id, current_level, purchase_price = property_row
+        if owner_id != user_id:
+            await db.rollback()
+            return False, "not_owner", None
+
+        safe_target = int(target_level)
+        if safe_target <= current_level or safe_target > max_level:
+            await db.rollback()
+            return False, "invalid_target", current_level
+
+        levels_to_upgrade = safe_target - current_level
+        per_level_cost = round(float(purchase_price or 0) * 0.5, 2)
+        total_cost = round(per_level_cost * levels_to_upgrade, 2)
+
+        cursor = await db.execute("SELECT money FROM users WHERE user_id = ?", (user_id,))
+        user_row = await cursor.fetchone()
+        money = user_row[0] if user_row else 0
+        if money < total_cost:
+            await db.rollback()
+            return False, "insufficient", total_cost
+
+        await apply_money_delta_with_db(db, user_id, -total_cost, economy_mode="direct")
+        await db.execute(
+            "UPDATE monopoly_properties SET level = ? WHERE map_id = ? AND owner_id = ?",
+            (safe_target, map_id, user_id),
+        )
+        await db.commit()
+        return True, "ok", {
+            "old_level": current_level,
+            "new_level": safe_target,
+            "levels_upgraded": levels_to_upgrade,
+            "total_cost": total_cost,
+        }
+
+
 async def decrement_jail_turn_and_add_bad_luck(user_id, turns_left):
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("UPDATE monopoly_players SET jail_turns_left = ? WHERE user_id = ?", (turns_left - 1, user_id))
@@ -319,4 +367,5 @@ __all__ = [
     "release_from_jail",
     "send_player_to_jail",
     "upgrade_property",
+    "upgrade_property_to_level",
 ]

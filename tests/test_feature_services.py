@@ -6,7 +6,7 @@ from app.features.casino import service as casino_service
 from app.features.profile import service as profile_service
 from app.features.stock_market import service as stock_service
 from app.cogs.gameplay import daily_signin
-from app.shared.data import stock_data
+from app.shared.data import map_data, stock_data, title_data
 
 
 class ProfileServiceTests(unittest.TestCase):
@@ -170,3 +170,17 @@ class CasinoServiceTests(unittest.TestCase):
         self.assertEqual(len(round_data["community_cards"]), 5)
         self.assertIn(round_data["player_name"], casino_service.POKER_HAND_NAMES.values())
         self.assertIn(round_data["dealer_name"], casino_service.POKER_HAND_NAMES.values())
+
+
+class ExpandedContentDataTests(unittest.TestCase):
+    def test_title_library_contains_100_unique_titles(self):
+        self.assertEqual(len(title_data.TITLES), 100)
+        self.assertEqual(len({item["name"] for item in title_data.TITLES.values()}), 100)
+
+    def test_map_contains_100_unique_properties(self):
+        properties = [tile for tile in map_data.MAP if tile["type"] == "property"]
+
+        self.assertEqual(map_data.MAP_SIZE, len(map_data.MAP))
+        self.assertEqual(len(properties), 100)
+        self.assertEqual(len({tile["name"] for tile in properties}), 100)
+        self.assertTrue(all(len(tile["rent"]) == 5 for tile in properties))

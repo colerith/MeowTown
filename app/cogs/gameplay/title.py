@@ -13,6 +13,8 @@ from app.features.economy.service import format_economy_notice
 from app.shared.data.title_data import RARITY_CONFIG, TITLES, TITLE_DRAW_COST, draw_random_title
 
 TITLE_IMAGE = "https://i.postimg.cc/4dFbg1Qj/title.png"
+TITLE_PAGE_SIZE = 25
+
 
 
 async def build_title_panel_embed(user_id):
@@ -43,7 +45,7 @@ async def build_title_panel_embed(user_id):
         lines.append(line)
 
     embed.description = "\n".join(lines)
-    embed.set_footer(text=f"当前共有 {len(lines)} 个称号 | 抽取花费 {TITLE_DRAW_COST} 喵币")
+    embed.set_footer(text=f"已拥有 {len(lines)}/{len(TITLES)} 个称号 | 抽取花费 {TITLE_DRAW_COST} 喵币")
     return embed
 
 
@@ -59,7 +61,7 @@ class TitleEquipSelect(Select):
             for tid in owned_ids
             if tid in TITLES
         ]
-        super().__init__(placeholder="选择要佩戴的称号...", min_values=1, max_values=1, options=options[:25])
+        super().__init__(placeholder="选择要佩戴的称号...", min_values=1, max_values=1, options=options)
 
     async def callback(self, interaction: discord.Interaction):
         if interaction.user.id != self.user_id:
@@ -68,6 +70,54 @@ class TitleEquipSelect(Select):
         title_name = self.values[0]
         await equip_user_title(self.user_id, title_name)
         await interaction.response.send_message(f"✅ 你现在佩戴的是 **【{title_name}】**。", ephemeral=True)
+
+
+class TitleEquipView(View):
+    def __init__(self, user_id, owned_ids, page=0):
+        super().__init__(timeout=180)
+        self.user_id = user_id
+        self.owned_ids = [tid for tid in owned_ids if tid in TITLES]
+        self.page_count = max(1, (len(self.owned_ids) + TITLE_PAGE_SIZE - 1) // TITLE_PAGE_SIZE)
+        self.page = max(0, min(page, self.page_count - 1))
+
+        start = self.page * TITLE_PAGE_SIZE
+        self.add_item(TitleEquipSelect(user_id, self.owned_ids[start:start + TITLE_PAGE_SIZE]))
+
+        previous_button = Button(
+            label="上一页",
+            style=discord.ButtonStyle.secondary,
+            emoji="⬅️",
+            row=1,
+            disabled=self.page == 0,
+        )
+        next_button = Button(
+            label="下一页",
+            style=discord.ButtonStyle.secondary,
+            emoji="➡️",
+            row=1,
+            disabled=self.page >= self.page_count - 1,
+        )
+        previous_button.callback = self.previous_page
+        next_button.callback = self.next_page
+        self.add_item(previous_button)
+        self.add_item(next_button)
+
+    def content(self):
+        return f"请选择一个称号进行佩戴（第 {self.page + 1}/{self.page_count} 页）："
+
+    async def interaction_check(self, interaction: discord.Interaction):
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("这不是你的称号面板。", ephemeral=True)
+            return False
+        return True
+
+    async def previous_page(self, interaction: discord.Interaction):
+        view = TitleEquipView(self.user_id, self.owned_ids, self.page - 1)
+        await interaction.response.edit_message(content=view.content(), view=view)
+
+    async def next_page(self, interaction: discord.Interaction):
+        view = TitleEquipView(self.user_id, self.owned_ids, self.page + 1)
+        await interaction.response.edit_message(content=view.content(), view=view)
 
 
 class TitlePanelView(View):
@@ -122,9 +172,8 @@ class TitlePanelView(View):
         if not owned_ids:
             return await interaction.response.send_message("你还没有称号可佩戴。", ephemeral=True)
 
-        view = View(timeout=120)
-        view.add_item(TitleEquipSelect(self.user_id, owned_ids))
-        await interaction.response.send_message("请选择一个称号进行佩戴：", view=view, ephemeral=True)
+        view = TitleEquipView(self.user_id, owned_ids)
+        await interaction.response.send_message(view.content(), view=view, ephemeral=True)
 
     @discord.ui.button(label="刷新列表", style=discord.ButtonStyle.secondary, emoji="🔄", row=0)
     async def refresh_btn(self, button, interaction):

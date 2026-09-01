@@ -64,6 +64,58 @@ MAP = [
     {"id": 49, "type": "property", "name": "创世之爪", "price": 12000, "rent": [1200, 3600, 10800, 18000, 26000], "icon": "🐾", "color": "Gold"}
 ]
 
+# 新城区：在保留原 50 格与地产 ID 的基础上，将可购买地产扩充到 100 种。
+EXPANSION_PROPERTY_NAMES = [
+    "云朵咖啡馆", "星光书店", "白爪医院", "铃铛车站", "猫尾剧院", "午夜面包房", "琥珀钟楼",
+    "翡翠温室", "蓝鳍水族馆", "银月旅店", "肉垫博物馆", "呼噜音乐厅", "胡须科学院", "罐头研究所",
+    "毛球体育馆", "纸箱会展中心", "猫爪温泉", "鱼干美食街", "薄荷疗养院", "屋顶观星台", "雨巷茶馆",
+    "雪绒滑雪场", "珊瑚潜水馆", "沙漠绿洲站", "森林树屋群", "极光摄影棚", "云海缆车站", "星河电影院",
+    "月桂图书馆", "金铃拍卖行", "紫晶珠宝坊", "翡翠银行塔", "黑曜石城堡", "红宝石歌剧院", "蓝钻商务港",
+    "白银铸币厂", "黄金贸易港", "铂金会客厅", "水晶科技园", "量子实验室", "机械猫工坊", "无人机机场",
+    "超导列车站", "全息游乐园", "机器人酒店", "数据云中心", "星际物流港", "火星猫粮厂", "木星观景环",
+    "土星度假村", "海王星浴场", "冥王星矿场", "彗星赛车场", "虫洞转运站", "平行宇宙街", "时间管理局",
+    "梦境制造厂", "彩虹能源站", "凤凰孵化园", "独角兽牧场", "巨龙藏宝库", "精灵月桂庭", "矮人工匠城",
+    "女巫药剂坊", "法师高塔", "骑士训练营", "王国大教堂", "天空王城", "世界树圣域", "永恒星宫",
+    "宇宙猫神殿",
+]
+
+EXPANSION_ICONS = ["☕", "📚", "🏥", "🚉", "🎭", "🥐", "🕰️", "🌱", "🐠", "🏨", "🏛️", "🎵"]
+EXPANSION_COLORS = ["SkyBlue", "Silver", "Emerald", "Ruby", "Sapphire", "Platinum", "Cosmic", "Royal"]
+
+for index, name in enumerate(EXPANSION_PROPERTY_NAMES):
+    price = 12500 + index * 500
+    base_rent = round(price * 0.10)
+    MAP.append(
+        {
+            "id": len(MAP),
+            "type": "property",
+            "name": name,
+            "price": price,
+            "rent": [
+                base_rent,
+                base_rent * 3,
+                base_rent * 9,
+                base_rent * 15,
+                base_rent * 22,
+            ],
+            "icon": EXPANSION_ICONS[index % len(EXPANSION_ICONS)],
+            "color": EXPANSION_COLORS[index % len(EXPANSION_COLORS)],
+        }
+    )
+    if (index + 1) % 4 == 0 and index < len(EXPANSION_PROPERTY_NAMES) - 1:
+        special_type = "chance" if (index // 4) % 2 == 0 else "destiny"
+        MAP.append(
+            {
+                "id": len(MAP),
+                "type": special_type,
+                "name": "机会" if special_type == "chance" else "命运",
+                "icon": "❓" if special_type == "chance" else "📜",
+            }
+        )
+
+MAP_SIZE = len(MAP)
+
+
 # --- 随机事件卡库 (100个) ---
 EVENT_CARDS = {
     "chance": [

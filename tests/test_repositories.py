@@ -408,6 +408,27 @@ class MonopolyRepositoryTests(RepositoryIntegrationTestCase):
         self.assertEqual(property_state[3], 1200)
         self.assertGreater(property_state[4], 0)
 
+    async def test_monopoly_repo_upgrades_property_directly_to_target_level(self):
+        await self.create_user(3005, money=10000, name="Builder")
+        await self.create_user(3006, money=10000, name="Stranger")
+        success, _ = await monopoly_repo.buy_property(3005, 15, 2000)
+        self.assertTrue(success)
+
+        success, reason, payload = await monopoly_repo.upgrade_property_to_level(3005, 15, 5)
+        self.assertTrue(success)
+        self.assertEqual(reason, "ok")
+        self.assertEqual(payload["old_level"], 1)
+        self.assertEqual(payload["new_level"], 5)
+        self.assertEqual(payload["levels_upgraded"], 4)
+        self.assertEqual(payload["total_cost"], 4000)
+        self.assertEqual((await monopoly_repo.get_property_state(15))[1], 5)
+        self.assertEqual(await user_repo.get_user_money(3005), 4000)
+
+        success, reason, _ = await monopoly_repo.upgrade_property_to_level(3006, 15, 5)
+        self.assertFalse(success)
+        self.assertEqual(reason, "not_owner")
+        self.assertEqual(await user_repo.get_user_money(3006), 10000)
+
     async def test_monopoly_repo_property_maintenance_and_reclaim(self):
         await self.create_user(3004, money=5000, name="Maintainer")
 
